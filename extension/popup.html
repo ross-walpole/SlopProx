@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      width: 240px;
+      background: #0a0a0a;
+      color: #f4f4f5;
+      font-family: system-ui, -apple-system, sans-serif;
+      font-size: 13px;
+    }
+    .header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 14px 16px 10px;
+      border-bottom: 1px solid #27272a;
+    }
+    .header-title { font-weight: 700; font-size: 14px; }
+    .status-dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: #71717a; flex-shrink: 0; margin-left: auto;
+    }
+    .status-dot.on  { background: #34d399; box-shadow: 0 0 6px #34d399; }
+    .status-dot.off { background: #f87171; }
+    .stats { padding: 12px 16px; display: flex; gap: 8px; }
+    .stat {
+      flex: 1; background: #18181b; border-radius: 8px;
+      padding: 10px 8px; text-align: center;
+    }
+    .stat-num { font-size: 22px; font-weight: 700; color: #34d399; }
+    .stat-num.amber { color: #fbbf24; }
+    .stat-num.purple { color: #a78bfa; }
+    .stat-label { font-size: 9px; color: #71717a; letter-spacing: 0.08em; margin-top: 2px; }
+    .footer { padding: 0 16px 14px; }
+    .off-msg { padding: 12px 16px; color: #71717a; font-size: 12px; line-height: 1.5; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <span>🛡️</span>
+    <span class="header-title">AI Slop Filter</span>
+    <span class="status-dot" id="dot"></span>
+  </div>
+  <div id="main">
+    <div class="stats">
+      <div class="stat">
+        <div class="stat-num" id="textCount">—</div>
+        <div class="stat-label">TEXT BLOCKED</div>
+      </div>
+      <div class="stat">
+        <div class="stat-num amber" id="imgCount">—</div>
+        <div class="stat-label">IMGS BLOCKED</div>
+      </div>
+    </div>
+    <div class="footer">
+      <div style="color:#52525b;font-size:11px;text-align:center">
+        Connected to local service
+      </div>
+    </div>
+  </div>
+  <div id="offline" style="display:none" class="off-msg">
+    App not running.<br>Start AI Slop Filter to activate.
+  </div>
+<script src="popup.js"></script>
+</body>
+</html>

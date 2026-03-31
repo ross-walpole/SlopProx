@@ -1,0 +1,36 @@
+{
+  "name": "ai-slop-filter",
+  "author": "Ross Walpole",
+  "version": "1.9.0",
+  "description": "AI Slop Filter — Clean the internet from AI-generated slop",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder --win"
+  },
+  "build": {
+    "appId": "com.ai.slopfilter",
+    "productName": "AI Slop Filter",
+    "win": {
+      "target": "nsis",
+      "icon": "icon.png",
+      "requestedExecutionLevel": "requireAdministrator"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "asarUnpack": [
+      "**/node_modules/sharp/**"
+    ]
+  },
+  "dependencies": {
+    "@huggingface/transformers": "^3.8.1",
+    "cheerio": "^1.0.0-rc.12",
+    "mockttp": "^4.2.3"
+  },
+  "devDependencies": {
+    "electron": "^41.0.4",
+    "electron-builder": "^25.1.8"
+  }
+}

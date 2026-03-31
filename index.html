@@ -1,0 +1,790 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>AI Slop Filter</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+    body { font-family: 'Inter', system-ui, sans-serif; user-select: none; }
+    .title-bar { -webkit-app-region: drag; }
+    .title-bar button { -webkit-app-region: no-drag; }
+    #installModal, #aboutModal, #privacyModal, #termsModal {
+                    display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.8);
+                    z-index: 50; align-items: center; justify-content: center; }
+    #installModal.open, #aboutModal.open, #privacyModal.open, #termsModal.open { display: flex; }
+    .step { display: none; }
+    .step.active { display: block; }
+    .step-dot { width: 26px; height: 26px; border-radius: 50%; display: flex;
+                align-items: center; justify-content: center; font-size: 11px;
+                font-weight: 700; flex-shrink: 0; transition: background 0.2s; }
+    input.path-input { user-select: text; }
+    .toggle-track { position: relative; width: 44px; height: 24px; border-radius: 9999px;
+                    background: #3f3f46; transition: background 0.2s; cursor: pointer; }
+    .toggle-track.on { background: #10b981; }
+    .toggle-track.disabled { opacity: 0.35; cursor: not-allowed; }
+    .toggle-thumb { position: absolute; top: 3px; left: 3px; width: 18px; height: 18px;
+                    border-radius: 9999px; background: #fff;
+                    transition: transform 0.2s; pointer-events: none; }
+    .toggle-track.on .toggle-thumb { transform: translateX(20px); }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .spinner { animation: spin 0.8s linear infinite; display: inline-block; }
+    .footer-link { color: #52525b; transition: color 0.15s; cursor: pointer; }
+    .footer-link:hover { color: #a1a1aa; }
+  </style>
+</head>
+<body class="bg-zinc-950 text-zinc-100 flex flex-col h-screen overflow-hidden">
+
+  <!-- Title bar -->
+  <div class="title-bar h-10 bg-zinc-900 flex items-center px-4 border-b border-zinc-800 select-none shrink-0">
+    <div class="flex items-center gap-2 shrink-0">
+      <span class="text-xl">🛡️</span>
+      <span class="font-semibold text-sm">AI Slop Filter</span>
+    </div>
+    <div class="flex-1 flex items-center gap-1.5 px-4 min-w-0">
+      <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0" id="statusDot"></span>
+      <span class="text-zinc-500 text-[10px] truncate" id="statusText">Initializing…</span>
+    </div>
+    <div class="flex gap-1 shrink-0">
+      <button onclick="window.electronAPI.send('window-minimize')"
+              class="w-7 h-7 hover:bg-zinc-700 rounded flex items-center justify-center text-zinc-400 text-xs">─</button>
+      <button onclick="window.electronAPI.send('window-close')"
+              class="w-7 h-7 hover:bg-red-600 hover:text-white rounded flex items-center justify-center text-zinc-400 text-xs">✕</button>
+    </div>
+  </div>
+
+  <!-- ── Startup overlay — blocks interaction until cert is installed ── -->
+  <div id="initOverlay"
+       style="top:40px"
+       class="fixed inset-x-0 bottom-0 bg-zinc-950 z-40 flex flex-col items-center justify-center gap-4
+              transition-opacity duration-300">
+    <div class="text-4xl spinner" id="overlaySpinner">⟳</div>
+    <div class="text-zinc-200 font-semibold text-sm" id="overlayTitle">Starting up…</div>
+    <div class="text-zinc-500 text-xs text-center px-10 leading-relaxed" id="overlayStatus">Loading AI model…</div>
+    <button id="overlayRetry"
+            class="hidden mt-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-medium
+                   px-4 py-2 rounded-xl border border-zinc-700 transition-colors">
+      Retry
+    </button>
+  </div>
+
+  <div class="flex-1 flex flex-col overflow-hidden">
+
+    <!-- Scrollable: counters + toggles -->
+    <div class="flex-1 overflow-y-auto p-4 flex flex-col gap-3">
+
+      <!-- Stats -->
+      <div class="grid grid-cols-4 gap-2.5">
+        <div class="bg-zinc-900 rounded-2xl p-3.5 text-center border border-zinc-800">
+          <div class="text-3xl font-bold text-emerald-400 tabular-nums" id="slop-counter">0</div>
+          <div class="text-zinc-600 text-[9px] mt-0.5 tracking-widest font-medium">SLOP BLOCKED</div>
+        </div>
+        <div class="bg-zinc-900 rounded-2xl p-3.5 text-center border border-zinc-800">
+          <div class="text-3xl font-bold text-amber-400 tabular-nums" id="ads-counter">0</div>
+          <div class="text-zinc-600 text-[9px] mt-0.5 tracking-widest font-medium">ADS BLOCKED</div>
+        </div>
+        <div class="bg-zinc-900 rounded-2xl p-3.5 text-center border border-zinc-800">
+          <div class="text-3xl font-bold text-violet-400 tabular-nums" id="images-counter">0</div>
+          <div class="text-zinc-600 text-[9px] mt-0.5 tracking-widest font-medium">AI IMAGES</div>
+        </div>
+        <div class="bg-zinc-900 rounded-2xl p-3.5 text-center border border-zinc-800">
+          <div class="text-3xl font-bold text-red-400 tabular-nums" id="youtube-counter">0</div>
+          <div class="text-zinc-600 text-[9px] mt-0.5 tracking-widest font-medium">YT AI VIDS</div>
+        </div>
+      </div>
+
+      <!-- AI Text Filter toggle -->
+      <div id="mainCard" class="flex items-center justify-between bg-zinc-900 rounded-2xl px-4 py-3.5 border border-zinc-800 cursor-pointer select-none">
+        <div class="flex items-center gap-3">
+          <span class="text-lg">🛡️</span>
+          <div>
+            <div class="font-semibold text-sm">AI Text Filter</div>
+            <div class="text-zinc-500 text-xs" id="mainSubtitle">Filters AI-generated text via proxy</div>
+          </div>
+        </div>
+        <div id="mainTrack" class="toggle-track on"><div class="toggle-thumb"></div></div>
+      </div>
+
+      <!-- Ad Blocker toggle -->
+      <div id="adCard" class="flex items-center justify-between bg-zinc-900 rounded-2xl px-4 py-3.5 border border-zinc-800 cursor-pointer select-none">
+        <div class="flex items-center gap-3">
+          <span class="text-lg">🚫</span>
+          <div>
+            <div class="font-semibold text-sm">Ad Blocker</div>
+            <div class="text-zinc-500 text-xs">Block intrusive ads system-wide via proxy</div>
+          </div>
+        </div>
+        <div id="adTrack" class="toggle-track on"><div class="toggle-thumb"></div></div>
+      </div>
+
+      <!-- Browser Extension card -->
+      <div class="bg-zinc-900 rounded-2xl px-4 py-3.5 border border-zinc-800">
+        <div class="flex items-center gap-3 mb-3">
+          <span class="text-lg">🧩</span>
+          <div class="flex-1 min-w-0">
+            <div class="font-semibold text-sm">Browser Extension</div>
+            <div class="text-zinc-500 text-xs" id="extSubtitle">Enables social media filtering &amp; AI image detection</div>
+          </div>
+          <span id="extBadge"
+                class="shrink-0 text-[9px] font-bold px-2 py-0.5 rounded-full border tracking-wide
+                       bg-zinc-800 text-zinc-500 border-zinc-700">
+            NOT INSTALLED
+          </span>
+        </div>
+        <div class="flex gap-2">
+          <button id="installExtBtn"
+                  class="flex-1 bg-indigo-600 hover:bg-indigo-500 active:scale-95 transition-all
+                         text-white font-semibold text-xs py-2 rounded-xl">
+            Install Extension
+          </button>
+          <button id="openFolderBtn"
+                  title="Open extension folder in Explorer"
+                  class="hidden px-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-400 text-xs font-medium rounded-xl transition-colors">
+            📂
+          </button>
+        </div>
+      </div>
+
+      <!-- AI Image Detection toggle -->
+      <div id="imageCard" class="flex items-center justify-between bg-zinc-900 rounded-2xl px-4 py-3.5 border border-zinc-800 select-none">
+        <div class="flex items-center gap-3">
+          <span class="text-lg">🖼️</span>
+          <div>
+            <div class="font-semibold text-sm">AI Image Detection</div>
+            <div class="text-zinc-500 text-xs" id="imgSubtitle">Install extension above to enable</div>
+          </div>
+        </div>
+        <div id="imageTrack" class="toggle-track disabled"><div class="toggle-thumb"></div></div>
+      </div>
+
+      <!-- YouTube AI Filter toggle -->
+      <div class="flex items-center justify-between bg-zinc-900 rounded-2xl px-4 py-3.5 border border-zinc-800 select-none">
+        <div class="flex items-center gap-3">
+          <span class="text-lg">▶️</span>
+          <div>
+            <div class="font-semibold text-sm">YouTube AI Filter</div>
+            <div class="text-zinc-500 text-xs" id="ytSubtitle">Warns when creator discloses AI-generated content</div>
+          </div>
+        </div>
+        <div id="ytTrack" class="toggle-track on"><div class="toggle-thumb"></div></div>
+      </div>
+
+    </div>
+
+    <!-- Pinned bottom: utility buttons + footer -->
+    <div class="shrink-0 px-4 pb-4 pt-3 border-t border-zinc-800/60 flex flex-col gap-2.5">
+
+      <div class="flex gap-2">
+        <button id="resetBtn"
+                class="flex-1 bg-zinc-900 hover:bg-zinc-800 transition-colors text-zinc-500
+                       text-xs font-medium py-2.5 rounded-xl border border-zinc-800">
+          Reset Counters
+        </button>
+        <button id="certBtn"
+                class="flex-1 bg-zinc-900 hover:bg-zinc-800 transition-colors text-zinc-500
+                       text-xs font-medium py-2.5 rounded-xl border border-zinc-800">
+          Reinstall Cert
+        </button>
+        <button id="debugLogBtn"
+                class="flex-1 bg-zinc-900 hover:bg-zinc-800 transition-colors text-zinc-500
+                       text-xs font-medium py-2.5 rounded-xl border border-zinc-800">
+          Debug Log
+        </button>
+      </div>
+
+      <div class="text-center text-[10px] leading-relaxed">
+        <span class="footer-link" id="privacyLink">Privacy</span>
+        <span class="text-zinc-800 mx-1.5">·</span>
+        <span class="footer-link" id="termsLink">Terms &amp; Attribution</span>
+        <span class="text-zinc-800 mx-1.5">·</span>
+        <span class="footer-link" id="aboutLink">About</span>
+      </div>
+
+    </div>
+
+  </div><!-- /flex-1 -->
+
+  <!-- ── Extension Install Modal ──────────────────────────────────── -->
+  <div id="installModal">
+    <div class="bg-zinc-900 border border-zinc-700 rounded-3xl p-6 w-[440px] mx-4 shadow-2xl">
+
+      <div class="flex items-center justify-between mb-5">
+        <div class="font-bold text-sm">Install Browser Extension</div>
+        <button id="modalClose" class="text-zinc-600 hover:text-zinc-300 text-lg leading-none transition-colors">✕</button>
+      </div>
+
+      <!-- Step progress dots -->
+      <div class="flex items-center gap-2 mb-6">
+        <div class="step-dot" id="dot1">1</div>
+        <div class="flex-1 h-px bg-zinc-700" id="line1"></div>
+        <div class="step-dot" id="dot2">2</div>
+        <div class="flex-1 h-px bg-zinc-700" id="line2"></div>
+        <div class="step-dot" id="dot3">3</div>
+        <div class="flex-1 h-px bg-zinc-700" id="line3"></div>
+        <div class="step-dot" id="dot4">✓</div>
+      </div>
+
+      <!-- Step 1: Opening browser (auto-advances) -->
+      <div class="step active" id="step1">
+        <div class="text-center py-2">
+          <div class="text-3xl mb-3"><span class="spinner">⟳</span></div>
+          <div class="text-zinc-200 font-semibold text-sm mb-2" id="step1Title">Opening browser…</div>
+          <p class="text-zinc-500 text-xs leading-relaxed mb-4">
+            Your browser is opening. Copy the address below and<br>
+            paste it in your address bar to reach Extensions:
+          </p>
+          <div class="bg-zinc-800 rounded-xl p-2.5 flex items-center justify-between gap-2 mb-4">
+            <span class="text-zinc-300 font-mono text-xs" id="extUrlDisplay">chrome://extensions</span>
+            <button id="copyExtUrl"
+                    class="text-indigo-400 hover:text-indigo-300 text-xs font-medium shrink-0 transition-colors">
+              Copy
+            </button>
+          </div>
+          <div class="text-zinc-600 text-xs" id="step1CountdownText">Moving on in <span id="step1Countdown">3</span>…</div>
+        </div>
+      </div>
+
+      <!-- Step 2: Enable developer mode -->
+      <div class="step" id="step2">
+        <div class="font-semibold text-sm text-zinc-200 mb-2">Enable Developer Mode</div>
+        <p class="text-zinc-500 text-xs leading-relaxed mb-3">
+          In the top-right of the Extensions page, turn on
+          <span class="text-zinc-200 font-medium">Developer mode</span>.
+          The toolbar will expand to show <span class="text-zinc-200 font-medium">"Load unpacked"</span>.
+        </p>
+        <div class="bg-zinc-800 border border-zinc-700 rounded-xl p-3 mb-4 flex items-center gap-3">
+          <span class="text-xl shrink-0">🔧</span>
+          <div class="text-xs text-zinc-400 leading-relaxed">
+            Top-right corner → <span class="text-zinc-200 font-medium">Developer mode</span>
+            → toggle <span class="text-emerald-400 font-bold">ON</span>
+          </div>
+        </div>
+        <button id="step2Next"
+                class="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs py-2.5 rounded-xl transition-colors">
+          Developer mode is on →
+        </button>
+      </div>
+
+      <!-- Step 3: Load unpacked -->
+      <div class="step" id="step3">
+        <div class="font-semibold text-sm text-zinc-200 mb-2">Load the Extension Folder</div>
+        <p class="text-zinc-500 text-xs leading-relaxed mb-3">
+          Click <span class="text-zinc-200 font-medium">"Load unpacked"</span>, then
+          select the folder below. The path is already on your clipboard — just
+          <span class="text-zinc-200 font-medium">paste it</span> in the file picker.
+        </p>
+        <div class="bg-zinc-800 border border-zinc-700 rounded-xl p-2.5 flex items-center gap-2 mb-2">
+          <input id="extPathInput" readonly
+                 class="path-input flex-1 bg-transparent text-zinc-300 font-mono text-xs outline-none truncate"
+                 value="loading…">
+          <button id="copyPathBtn"
+                  class="text-indigo-400 hover:text-indigo-300 text-xs font-medium shrink-0 transition-colors">
+            Copy
+          </button>
+        </div>
+        <button id="openFolderStep3"
+                class="w-full bg-zinc-800 hover:bg-zinc-700 text-zinc-400 text-xs font-medium
+                       py-2 rounded-xl mb-3 transition-colors">
+          📂 Open folder in Explorer instead
+        </button>
+        <button id="step3Next"
+                class="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs py-2.5 rounded-xl transition-colors">
+          Extension loaded →
+        </button>
+      </div>
+
+      <!-- Step 4: Done -->
+      <div class="step" id="step4">
+        <div class="text-center py-2">
+          <div class="text-4xl mb-3">🎉</div>
+          <div class="text-zinc-200 font-bold text-sm mb-2">Extension installed!</div>
+          <p class="text-zinc-500 text-xs leading-relaxed mb-5">
+            The extension is now active. It enables filtering on
+            <span class="text-zinc-200 font-medium">X.com, LinkedIn, Instagram</span>
+            and every other site — and unlocks
+            <span class="text-violet-400 font-medium">AI Image Detection</span>
+            in the dashboard.
+          </p>
+          <button id="step4Done"
+                  class="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs py-2.5 rounded-xl transition-colors">
+            Done
+          </button>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ── About Modal ──────────────────────────────────────────────── -->
+  <div id="aboutModal">
+    <div class="bg-zinc-900 border border-zinc-700 rounded-3xl p-6 w-[420px] mx-4 shadow-2xl">
+      <div class="flex items-center justify-between mb-5">
+        <div class="font-bold text-sm">About AI Slop Filter</div>
+        <button id="aboutModalClose" class="text-zinc-600 hover:text-zinc-300 text-lg leading-none transition-colors">✕</button>
+      </div>
+      <div class="space-y-4 text-xs text-zinc-400 leading-relaxed overflow-y-auto max-h-[70vh] pr-1">
+
+        <!-- Mission -->
+        <div class="text-center py-1">
+          <div class="text-3xl mb-3">🛡️</div>
+          <div class="text-zinc-100 font-bold text-base mb-2">Keep the internet human.</div>
+          <p class="text-zinc-500 leading-relaxed">
+            We built AI Slop Filter because we believe the web is better when it's made by real people —
+            with their quirks, mistakes, and genuine perspectives. AI-generated content at scale dilutes
+            what makes the internet worth visiting.
+          </p>
+        </div>
+
+        <div class="border-t border-zinc-800"></div>
+
+        <!-- What it does -->
+        <div>
+          <div class="text-zinc-500 font-semibold text-[10px] mb-2.5 tracking-widest uppercase">What it does</div>
+          <div class="space-y-2">
+            <div class="flex gap-2.5 items-start"><span class="text-emerald-400 shrink-0 mt-px">✦</span><span>Detects and hides AI-generated text in articles, feeds, and social media</span></div>
+            <div class="flex gap-2.5 items-start"><span class="text-violet-400 shrink-0 mt-px">✦</span><span>Identifies and replaces AI-generated images before you see them</span></div>
+            <div class="flex gap-2.5 items-start"><span class="text-amber-400 shrink-0 mt-px">✦</span><span>Blocks intrusive ads system-wide via a local proxy</span></div>
+            <div class="flex gap-2.5 items-start"><span class="text-blue-400 shrink-0 mt-px">✦</span><span>Runs entirely on your device — no cloud, no tracking, no subscriptions</span></div>
+          </div>
+        </div>
+
+        <div class="border-t border-zinc-800"></div>
+
+        <!-- How it works -->
+        <div>
+          <div class="text-zinc-500 font-semibold text-[10px] mb-2.5 tracking-widest uppercase">How it works</div>
+          <p class="text-zinc-500 leading-relaxed">
+            A lightweight local proxy intercepts page traffic and injects a filter powered by on-device AI models.
+            A companion browser extension extends filtering to social media sites like X, Reddit, Instagram, and
+            LinkedIn that require direct integration.
+          </p>
+        </div>
+
+        <div class="border-t border-zinc-800"></div>
+
+        <div class="text-zinc-700 text-center text-[10px]">AI Slop Filter v1.9.0 · All inference runs locally on your device</div>
+      </div>
+
+      <div class="mt-5">
+        <button id="aboutModalDone"
+                class="w-full bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-semibold text-xs py-2.5 rounded-xl transition-colors">
+          Close
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Privacy Modal ─────────────────────────────────────────────── -->
+  <div id="privacyModal">
+    <div class="bg-zinc-900 border border-zinc-700 rounded-3xl p-6 w-[420px] mx-4 shadow-2xl">
+      <div class="flex items-center justify-between mb-5">
+        <div class="font-bold text-sm">Privacy Policy</div>
+        <button id="privacyModalClose" class="text-zinc-600 hover:text-zinc-300 text-lg leading-none transition-colors">✕</button>
+      </div>
+      <div class="space-y-4 text-xs text-zinc-400 leading-relaxed overflow-y-auto max-h-[70vh] pr-1">
+
+        <div class="bg-emerald-900/20 border border-emerald-800/40 rounded-xl p-3 text-emerald-400 text-[11px] font-semibold text-center">
+          We collect nothing. Ever.
+        </div>
+
+        <div>
+          <div class="text-zinc-500 font-semibold text-[10px] mb-2.5 tracking-widest uppercase">What we process</div>
+          <p class="text-zinc-500 leading-relaxed">
+            Text content and images from pages you visit are analysed locally by on-device machine learning models.
+            This analysis happens entirely on your computer — the results are never transmitted anywhere.
+          </p>
+        </div>
+
+        <div class="border-t border-zinc-800"></div>
+
+        <div>
+          <div class="text-zinc-500 font-semibold text-[10px] mb-2.5 tracking-widest uppercase">What we don't do</div>
+          <div class="space-y-2">
+            <div class="flex gap-2.5 items-start"><span class="text-red-500 shrink-0">✕</span><span>Collect or store your browsing data</span></div>
+            <div class="flex gap-2.5 items-start"><span class="text-red-500 shrink-0">✕</span><span>Track which sites you visit</span></div>
+            <div class="flex gap-2.5 items-start"><span class="text-red-500 shrink-0">✕</span><span>Send telemetry or analytics anywhere</span></div>
+            <div class="flex gap-2.5 items-start"><span class="text-red-500 shrink-0">✕</span><span>Operate any servers or cloud infrastructure</span></div>
+            <div class="flex gap-2.5 items-start"><span class="text-red-500 shrink-0">✕</span><span>Sell or share your data with anyone</span></div>
+          </div>
+        </div>
+
+        <div class="border-t border-zinc-800"></div>
+
+        <div>
+          <div class="text-zinc-500 font-semibold text-[10px] mb-2.5 tracking-widest uppercase">The local proxy</div>
+          <p class="text-zinc-500 leading-relaxed">
+            To filter content on HTTPS pages, AI Slop Filter installs a local Certificate Authority (CA) on your
+            device and runs a local HTTPS proxy on port 8081. This allows the app to read and modify page content
+            before it reaches your browser. This interception is entirely local — no traffic is routed through
+            any external server.
+          </p>
+        </div>
+
+        <div class="border-t border-zinc-800"></div>
+
+        <div>
+          <div class="text-zinc-500 font-semibold text-[10px] mb-2.5 tracking-widest uppercase">The browser extension</div>
+          <p class="text-zinc-500 leading-relaxed">
+            The companion extension communicates only with the local app at 127.0.0.1:8083.
+            It never contacts any external URL and requests no remote permissions.
+          </p>
+        </div>
+
+        <div class="text-zinc-700 text-center text-[10px] pt-1">Last updated March 2026</div>
+      </div>
+
+      <div class="mt-5">
+        <button id="privacyModalDone"
+                class="w-full bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-semibold text-xs py-2.5 rounded-xl transition-colors">
+          Close
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Terms & Attribution Modal ─────────────────────────────────── -->
+  <div id="termsModal">
+    <div class="bg-zinc-900 border border-zinc-700 rounded-3xl p-6 w-[420px] mx-4 shadow-2xl">
+      <div class="flex items-center justify-between mb-5">
+        <div class="font-bold text-sm">Terms &amp; Attribution</div>
+        <button id="termsModalClose" class="text-zinc-600 hover:text-zinc-300 text-lg leading-none transition-colors">✕</button>
+      </div>
+      <div class="space-y-4 text-xs text-zinc-400 leading-relaxed overflow-y-auto max-h-[70vh] pr-1">
+
+        <div>
+          <div class="text-zinc-500 font-semibold text-[10px] mb-2.5 tracking-widest uppercase">Terms of use</div>
+          <p class="text-zinc-500 leading-relaxed">
+            AI Slop Filter is provided as-is for personal, non-commercial use. The app modifies your system
+            proxy settings and installs a local CA certificate to enable HTTPS filtering. Uninstalling the app
+            restores your original proxy settings. We are not responsible for compatibility issues with specific
+            websites or applications that may result from the proxy configuration.
+          </p>
+        </div>
+
+        <div class="border-t border-zinc-800"></div>
+
+        <div>
+          <div class="text-zinc-500 font-semibold text-[10px] mb-3 tracking-widest uppercase">Open-source models</div>
+          <div class="space-y-2.5">
+
+            <div class="bg-zinc-800 rounded-xl p-3">
+              <div class="text-zinc-300 font-medium text-[11px] mb-0.5">Text detection</div>
+              <div class="text-indigo-400 font-mono text-[10px] mb-1.5 cursor-pointer hover:text-indigo-300"
+                   id="textModelLink">onnx-community/tmr-ai-text-detector</div>
+              <div class="text-zinc-600 text-[10px]">Apache 2.0</div>
+            </div>
+
+            <div class="bg-zinc-800 rounded-xl p-3">
+              <div class="text-zinc-300 font-medium text-[11px] mb-0.5">Image detection — Model A</div>
+              <div class="text-indigo-400 font-mono text-[10px] mb-1.5 cursor-pointer hover:text-indigo-300"
+                   id="imgModelALink">yaya36095/ai-source-detector</div>
+              <div class="text-zinc-600 text-[10px]">CC-BY 4.0</div>
+            </div>
+
+            <div class="bg-zinc-800 rounded-xl p-3">
+              <div class="text-zinc-300 font-medium text-[11px] mb-0.5">Image detection — Model B</div>
+              <div class="text-indigo-400 font-mono text-[10px] mb-1.5 cursor-pointer hover:text-indigo-300"
+                   id="imgModelBLink">onnx-community/SMOGY-Ai-images-detector-ONNX</div>
+              <div class="text-zinc-600 text-[10px]">Fine-tuned from Organika/sdxl-detector</div>
+            </div>
+
+          </div>
+        </div>
+
+        <div class="border-t border-zinc-800"></div>
+
+        <div>
+          <div class="text-zinc-500 font-semibold text-[10px] mb-2.5 tracking-widest uppercase">Built with</div>
+          <div class="grid grid-cols-2 gap-1.5 text-[10px]">
+            <div class="flex justify-between bg-zinc-800 rounded-lg px-2.5 py-2">
+              <span class="text-zinc-300">Electron</span><span class="text-zinc-600">MIT</span>
+            </div>
+            <div class="flex justify-between bg-zinc-800 rounded-lg px-2.5 py-2">
+              <span class="text-zinc-300">mockttp</span><span class="text-zinc-600">Apache 2.0</span>
+            </div>
+            <div class="flex justify-between bg-zinc-800 rounded-lg px-2.5 py-2">
+              <span class="text-zinc-300">@hf/transformers</span><span class="text-zinc-600">Apache 2.0</span>
+            </div>
+            <div class="flex justify-between bg-zinc-800 rounded-lg px-2.5 py-2">
+              <span class="text-zinc-300">Tailwind CSS</span><span class="text-zinc-600">MIT</span>
+            </div>
+          </div>
+        </div>
+
+      </div>
+      <div class="mt-5">
+        <button id="termsModalDone"
+                class="w-full bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-semibold text-xs py-2.5 rounded-xl transition-colors">
+          Close
+        </button>
+      </div>
+    </div>
+  </div>
+
+<script>
+window.addEventListener('load', () => {
+  const api = window.electronAPI;
+  let extensionInstalled = false;
+  let detectedExtUrl = 'chrome://extensions';
+
+  // ── Toggle helper ────────────────────────────────────────────────
+  function mkToggle(trackId, onSend, offSend) {
+    const track = document.getElementById(trackId);
+    track.addEventListener('click', () => {
+      if (track.classList.contains('disabled')) return;
+      const isOn = track.classList.toggle('on');
+      api.send(isOn ? onSend : offSend);
+    });
+    return {
+      set(val)     { track.classList.toggle('on', val); },
+      isOn()       { return track.classList.contains('on'); },
+      setLocked(v) { track.classList.toggle('disabled', v); },
+    };
+  }
+
+  const mainToggle    = mkToggle('mainTrack',  'toggle-filter',          'toggle-filter');
+  const adToggle      = mkToggle('adTrack',    'toggle-adblock',         'toggle-adblock');
+  const imageToggle   = mkToggle('imageTrack', 'toggle-image-detection', 'toggle-image-detection');
+  const youtubeToggle = mkToggle('ytTrack',    'toggle-youtube-filter',  'toggle-youtube-filter');
+
+  // Image card click — nudge if extension not installed
+  document.getElementById('imageCard').addEventListener('click', e => {
+    if (!extensionInstalled && !e.target.closest('.toggle-track')) {
+      document.getElementById('imgSubtitle').textContent = 'Install the extension above first ↑';
+      setTimeout(() => {
+        document.getElementById('imgSubtitle').textContent = 'Install extension above to enable';
+      }, 2500);
+    }
+  });
+
+  // ── Sync toggles from main process ──────────────────────────────
+  api.on('filter-status', v => {
+    mainToggle.set(v);
+    document.getElementById('mainSubtitle').textContent = v
+      ? (extensionInstalled ? 'Filtering AI text via proxy + extension' : 'Filtering AI text via proxy · add extension for social media')
+      : 'AI text filtering paused · proxy still active';
+  });
+  api.on('adblock-status',         v => adToggle.set(v));
+  api.on('image-detection-status', v => {
+    imageToggle.set(v);
+    if (extensionInstalled) {
+      document.getElementById('imgSubtitle').textContent = v
+        ? 'Active — detecting AI-generated images'
+        : 'Uses ~84 MB local model';
+    }
+  });
+
+  // ── Counters ─────────────────────────────────────────────────────
+  api.on('filter-count',   c => { document.getElementById('slop-counter').textContent    = c.toLocaleString(); });
+  api.on('ads-count',      c => { document.getElementById('ads-counter').textContent     = c.toLocaleString(); });
+  api.on('images-count',   c => { document.getElementById('images-counter').textContent  = c.toLocaleString(); });
+  api.on('youtube-count',  c => { document.getElementById('youtube-counter').textContent = c.toLocaleString(); });
+  api.on('youtube-filter-status', v => {
+    youtubeToggle.set(v);
+    document.getElementById('ytSubtitle').textContent = v
+      ? 'Warns when creator discloses AI-generated content'
+      : 'YouTube AI label detection paused';
+  });
+
+  // ── Startup overlay ───────────────────────────────────────────────
+  const overlay       = document.getElementById('initOverlay');
+  const overlayTitle  = document.getElementById('overlayTitle');
+  const overlayStatus = document.getElementById('overlayStatus');
+  const overlaySpinner = document.getElementById('overlaySpinner');
+  const overlayRetry  = document.getElementById('overlayRetry');
+  let overlayDismissed = false;
+
+  function dismissOverlay() {
+    if (overlayDismissed) return;
+    overlayDismissed = true;
+    overlay.style.opacity = '0';
+    setTimeout(() => overlay.remove(), 300);
+  }
+
+  api.on('cert-ready', ok => {
+    if (ok) {
+      dismissOverlay();
+    } else {
+      overlaySpinner.style.display = 'none';
+      overlayTitle.textContent = 'Certificate install failed';
+      overlayTitle.classList.add('text-red-400');
+      overlayRetry.classList.remove('hidden');
+    }
+  });
+
+  overlayRetry.addEventListener('click', () => {
+    overlaySpinner.style.display = '';
+    overlayTitle.textContent = 'Retrying…';
+    overlayTitle.classList.remove('text-red-400');
+    overlayRetry.classList.add('hidden');
+    api.send('reinstall-cert');
+  });
+
+  // ── Status bar ───────────────────────────────────────────────────
+  const statusText = document.getElementById('statusText');
+  const statusDot  = document.getElementById('statusDot');
+  api.on('status-update', msg => {
+    if (!overlayDismissed) overlayStatus.textContent = msg;
+    statusText.textContent = msg;
+    const isErr = /error|fail/i.test(msg);
+    statusDot.className = `w-1.5 h-1.5 rounded-full shrink-0 ${isErr ? 'bg-red-500' : 'bg-emerald-400'}`;
+  });
+
+  // ── Browser detected ─────────────────────────────────────────────
+  api.on('browser-detected', ({ name, extUrl }) => {
+    detectedExtUrl = extUrl;
+    document.getElementById('step1Title').textContent  = `Opening ${name}…`;
+    document.getElementById('extUrlDisplay').textContent = extUrl;
+  });
+
+  // ── Utility buttons ───────────────────────────────────────────────
+  document.getElementById('resetBtn').addEventListener('click',    () => api.send('reset-all'));
+  document.getElementById('certBtn').addEventListener('click',     () => api.send('reinstall-cert'));
+  document.getElementById('debugLogBtn').addEventListener('click', () => api.send('open-debug-log'));
+  document.getElementById('openFolderBtn').addEventListener('click', () => api.send('open-extension-folder'));
+
+  // ── Extension installed state ─────────────────────────────────────
+  function setExtInstalled(installed) {
+    extensionInstalled = installed;
+    const badge      = document.getElementById('extBadge');
+    const installBtn = document.getElementById('installExtBtn');
+    const folderBtn  = document.getElementById('openFolderBtn');
+    const imgSubtitle = document.getElementById('imgSubtitle');
+
+    if (installed) {
+      badge.textContent = 'INSTALLED';
+      badge.className = 'shrink-0 text-[9px] font-bold px-2 py-0.5 rounded-full border tracking-wide bg-emerald-900/40 text-emerald-400 border-emerald-700';
+      installBtn.textContent = 'Reinstall';
+      installBtn.className = installBtn.className.replace('bg-indigo-600 hover:bg-indigo-500', 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300');
+      folderBtn.classList.remove('hidden');
+      // Unlock image detection
+      imageToggle.setLocked(false);
+      document.getElementById('imageCard').classList.add('cursor-pointer');
+      imgSubtitle.textContent = 'Uses ~84 MB local model';
+      // Re-evaluate main subtitle now extension is known
+      document.getElementById('mainSubtitle').textContent = mainToggle.isOn()
+        ? 'Filtering AI text via proxy + extension'
+        : 'AI text filtering paused · proxy still active';
+    } else {
+      badge.textContent = 'NOT INSTALLED';
+      badge.className = 'shrink-0 text-[9px] font-bold px-2 py-0.5 rounded-full border tracking-wide bg-zinc-800 text-zinc-500 border-zinc-700';
+      imageToggle.setLocked(true);
+      imgSubtitle.textContent = 'Install extension above to enable';
+      document.getElementById('mainSubtitle').textContent = mainToggle.isOn()
+        ? 'Filtering AI text via proxy · add extension for social media'
+        : 'AI text filtering paused · proxy still active';
+    }
+  }
+
+  api.on('extension-installed', v => setExtInstalled(v));
+
+  // ── Install modal ─────────────────────────────────────────────────
+  let extPath   = '';
+  let modalOpen = false;
+  const modal   = document.getElementById('installModal');
+  const pathInput = document.getElementById('extPathInput');
+
+  const dotColors  = { active: 'bg-indigo-600 text-white', done: 'bg-emerald-600 text-white', pending: 'bg-zinc-700 text-zinc-500' };
+  const lineColors = { active: 'bg-indigo-600', pending: 'bg-zinc-700' };
+
+  function goToStep(n) {
+    [1,2,3,4].forEach(i => {
+      document.getElementById('step' + i).classList.toggle('active', i === n);
+      const dot = document.getElementById('dot' + i);
+      dot.className = 'step-dot ' + (i === n ? dotColors.active : i < n ? dotColors.done : dotColors.pending);
+    });
+    [1,2,3].forEach(i => {
+      document.getElementById('line' + i).className = 'flex-1 h-px ' + (i < n ? lineColors.active : lineColors.pending);
+    });
+  }
+
+  function openModal() {
+    if (modalOpen) return;
+    modalOpen = true;
+    goToStep(1);
+    modal.classList.add('open');
+    let secs = 3;
+    const tick = setInterval(() => {
+      secs--;
+      const el = document.getElementById('step1Countdown');
+      if (el) el.textContent = secs;
+      if (secs <= 0) { clearInterval(tick); goToStep(2); }
+    }, 1000);
+  }
+
+  function closeModal() { modal.classList.remove('open'); modalOpen = false; }
+
+  document.getElementById('installExtBtn').addEventListener('click', () => {
+    api.send('install-extension');
+    openModal();
+  });
+  document.getElementById('modalClose').addEventListener('click', closeModal);
+  modal.addEventListener('click', e => { if (e.target === modal) closeModal(); });
+
+  document.getElementById('copyExtUrl').addEventListener('click', e => {
+    navigator.clipboard.writeText(detectedExtUrl);
+    e.target.textContent = 'Copied!';
+    setTimeout(() => { e.target.textContent = 'Copy'; }, 1500);
+  });
+
+  document.getElementById('step2Next').addEventListener('click', () => goToStep(3));
+
+  document.getElementById('copyPathBtn').addEventListener('click', e => {
+    navigator.clipboard.writeText(extPath || pathInput.value);
+    e.target.textContent = 'Copied!';
+    setTimeout(() => { e.target.textContent = 'Copy'; }, 1500);
+  });
+
+  document.getElementById('openFolderStep3').addEventListener('click', () => api.send('open-extension-folder'));
+  document.getElementById('step3Next').addEventListener('click', () => goToStep(4));
+  document.getElementById('step4Done').addEventListener('click', () => { closeModal(); setExtInstalled(true); });
+
+  api.on('extension-install-ready', p => {
+    extPath = p;
+    pathInput.value = p;
+    navigator.clipboard.writeText(p).catch(() => {});
+  });
+
+  // ── About modal ───────────────────────────────────────────────────
+  const aboutModal = document.getElementById('aboutModal');
+  function openAbout()  { aboutModal.classList.add('open'); }
+  function closeAbout() { aboutModal.classList.remove('open'); }
+
+  document.getElementById('aboutLink').addEventListener('click', openAbout);
+  document.getElementById('aboutModalClose').addEventListener('click', closeAbout);
+  document.getElementById('aboutModalDone').addEventListener('click', closeAbout);
+  aboutModal.addEventListener('click', e => { if (e.target === aboutModal) closeAbout(); });
+
+  // ── Privacy modal ─────────────────────────────────────────────────
+  const privacyModal = document.getElementById('privacyModal');
+  function openPrivacy()  { privacyModal.classList.add('open'); }
+  function closePrivacy() { privacyModal.classList.remove('open'); }
+
+  document.getElementById('privacyLink').addEventListener('click', openPrivacy);
+  document.getElementById('privacyModalClose').addEventListener('click', closePrivacy);
+  document.getElementById('privacyModalDone').addEventListener('click', closePrivacy);
+  privacyModal.addEventListener('click', e => { if (e.target === privacyModal) closePrivacy(); });
+
+  // ── Terms & Attribution modal ─────────────────────────────────────
+  const termsModal = document.getElementById('termsModal');
+  function openTerms()  { termsModal.classList.add('open'); }
+  function closeTerms() { termsModal.classList.remove('open'); }
+
+  document.getElementById('termsLink').addEventListener('click', openTerms);
+  document.getElementById('termsModalClose').addEventListener('click', closeTerms);
+  document.getElementById('termsModalDone').addEventListener('click', closeTerms);
+  termsModal.addEventListener('click', e => { if (e.target === termsModal) closeTerms(); });
+
+  document.getElementById('textModelLink').addEventListener('click', () => {
+    api.send('open-external', 'https://huggingface.co/onnx-community/tmr-ai-text-detector');
+  });
+  document.getElementById('imgModelALink').addEventListener('click', () => {
+    api.send('open-external', 'https://huggingface.co/yaya36095/ai-source-detector');
+  });
+  document.getElementById('imgModelBLink').addEventListener('click', () => {
+    api.send('open-external', 'https://huggingface.co/onnx-community/SMOGY-Ai-images-detector-ONNX');
+  });
+});
+</script>
+</body>
+</html>
