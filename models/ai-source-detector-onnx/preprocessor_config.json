@@ -1,0 +1,38 @@
+{
+  "do_convert_rgb": null,
+  "do_normalize": true,
+  "do_rescale": true,
+  "do_resize": true,
+  "id2label": {
+    "0": "stable_diffusion",
+    "1": "midjourney",
+    "2": "dalle",
+    "3": "real",
+    "4": "other_ai"
+  },
+  "image_mean": [
+    0.5,
+    0.5,
+    0.5
+  ],
+  "image_processor_type": "ViTImageProcessor",
+  "image_std": [
+    0.5,
+    0.5,
+    0.5
+  ],
+  "label2id": {
+    "dalle": 2,
+    "midjourney": 1,
+    "other_ai": 4,
+    "real": 3,
+    "stable_diffusion": 0
+  },
+  "num_labels": 5,
+  "resample": 2,
+  "rescale_factor": 0.00392156862745098,
+  "size": {
+    "height": 224,
+    "width": 224
+  }
+}

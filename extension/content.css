@@ -1,0 +1,260 @@
+/* ─────────────────────────────────────────────────────────────────
+   Shared design tokens — used by all three placeholder types
+───────────────────────────────────────────────────────────────── */
+
+/* Reveal button — identical across card / text / image placeholders */
+.sf-reveal-btn {
+  padding: 5px 16px;
+  background: rgba(239, 68, 68, 0.12);
+  color: #fca5a5;
+  border: 1px solid rgba(239, 68, 68, 0.38);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.65;
+  flex-shrink: 0;
+  white-space: nowrap;
+  font-family: system-ui, -apple-system, sans-serif;
+  transition: background 0.14s, border-color 0.14s;
+}
+.sf-reveal-btn:hover {
+  background: rgba(239, 68, 68, 0.22);
+  border-color: rgba(239, 68, 68, 0.62);
+}
+
+/* Detection row: 🤖 icon + label + confidence badge */
+.sf-detect-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.sf-detect-icon {
+  font-size: 16px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.sf-detect-label {
+  color: #fca5a5;
+  font-family: system-ui, -apple-system, sans-serif;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+.sf-detect-method {
+  color: rgba(255, 255, 255, 0.45);
+  background: rgba(255, 255, 255, 0.07);
+  border-radius: 3px;
+  padding: 1px 6px;
+  font-family: system-ui, -apple-system, sans-serif;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.sf-detect-conf {
+  color: #fff;
+  background: rgba(239, 68, 68, 0.48);
+  border-radius: 3px;
+  padding: 1px 6px;
+  font-family: system-ui, -apple-system, sans-serif;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* ─────────────────────────────────────────────────────────────────
+   Card placeholder
+   Replaces the ENTIRE post/tweet card in social media feeds.
+   Takes exactly the same vertical space as the original card so
+   the feed layout doesn't shift.
+───────────────────────────────────────────────────────────────── */
+
+.sf-card-placeholder {
+  box-sizing: border-box;
+  background: #0c0c0c;
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  margin: 2px 0;
+  cursor: default;
+}
+
+.sf-card-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  padding: 24px 28px;
+  text-align: center;
+}
+
+/* ─────────────────────────────────────────────────────────────────
+   Text placeholder (inline / article context)
+   Hides the original <p>/<li>/etc. with display:none and inserts
+   a compact horizontal bar in its place. No blur, no overflow issues.
+───────────────────────────────────────────────────────────────── */
+
+.sf-content {
+  display: none !important;
+}
+
+.sf-text-placeholder {
+  box-sizing: border-box;
+  background: rgba(12, 12, 12, 0.9);
+  border: 1px solid rgba(239, 68, 68, 0.32);
+  border-radius: 6px;
+  display: block;
+  margin: 4px 0;
+}
+
+.sf-text-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 14px;
+  flex-wrap: wrap;
+}
+
+/* ─────────────────────────────────────────────────────────────────
+   Image placeholder
+   Fully replaces the <img> element. No wrapping, no absolute
+   positioning — works in flex, grid, overflow:hidden containers.
+   width / height / aspect-ratio set inline by content.js.
+───────────────────────────────────────────────────────────────── */
+
+.sf-img-placeholder {
+  box-sizing: border-box;
+  background: #0c0c0c;
+  border: 1px solid rgba(239, 68, 68, 0.38);
+  border-radius: 8px;
+  align-items: center;
+  justify-content: center;
+  min-height: 80px;
+  overflow: hidden;
+}
+
+.sf-img-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 18px 22px;
+  text-align: center;
+}
+
+/* Compact: images between 300–499 px wide */
+.sf-img-placeholder.sf-compact .sf-img-inner   { padding: 10px 14px; gap: 8px; }
+.sf-img-placeholder.sf-compact .sf-detect-label { font-size: 12px; }
+.sf-img-placeholder.sf-compact .sf-detect-icon  { font-size: 14px; }
+
+/* ─────────────────────────────────────────────────────────────────
+   Scanning state — applied to the image (or its card) while
+   classification is in-flight. The user sees a blurred placeholder
+   instead of the full image before the verdict is known.
+   JS applies the transition inline so the blur-in and unblur speeds
+   can differ. This class only sets the end-state values.
+───────────────────────────────────────────────────────────────── */
+.sf-scanning {
+  filter: blur(14px) !important;
+  opacity: 0.55 !important;
+}
+
+/* ── YouTube AI-label overlay (covers the player) ──────────────── */
+
+.sf-yt-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(8, 8, 8, 0.93);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  z-index: 2147483647;
+  font-family: system-ui, -apple-system, sans-serif;
+  text-align: center;
+  padding: 24px;
+  box-sizing: border-box;
+  cursor: default;
+  pointer-events: none; /* let scroll/swipe pass through to YouTube */
+}
+
+.sf-yt-ov-icon {
+  font-size: 40px;
+  line-height: 1;
+}
+
+.sf-yt-ov-title {
+  color: #fca5a5;
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.sf-yt-ov-sub {
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 13px;
+  line-height: 1.55;
+  max-width: 320px;
+}
+
+.sf-yt-ov-buttons {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: center;
+  pointer-events: auto; /* re-enable clicks only for the buttons */
+  margin-top: 4px;
+}
+
+.sf-yt-play-btn, .sf-yt-next-btn {
+  padding: 8px 22px;
+  background: rgba(239, 68, 68, 0.14);
+  color: #fca5a5;
+  border: 1px solid rgba(239, 68, 68, 0.42);
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 600;
+  font-family: inherit;
+  transition: background 0.14s, border-color 0.14s;
+}
+.sf-yt-play-btn:hover, .sf-yt-next-btn:hover {
+  background: rgba(239, 68, 68, 0.26);
+  border-color: rgba(239, 68, 68, 0.65);
+}
+
+/* ── YouTube feed card badge ───────────────────────────────────── */
+
+.sf-yt-feed-badge {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  background: rgba(0, 0, 0, 0.82);
+  color: #fca5a5;
+  font-family: system-ui, -apple-system, sans-serif;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 4px;
+  border: 1px solid rgba(239, 68, 68, 0.45);
+  pointer-events: none;
+  z-index: 10;
+  white-space: nowrap;
+}
