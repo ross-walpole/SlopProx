@@ -1,7 +1,7 @@
 {
   "name": "ai-slop-filter",
   "author": "Ross Walpole",
-  "version": "1.9.0",
+  "version": "1.0.0",
   "description": "SlopProx AI Slop Filter — Reclaim the internet from AI-generated slop.",
   "main": "main.js",
   "scripts": {
@@ -23,7 +23,9 @@
     "publish": {
       "provider": "github",
       "owner": "ross-walpole",
-      "repo": "SlopProx"
+      "repo": "SlopProx",
+      "private": true,
+      "token": "your_github_token_here"
     },
     "asarUnpack": [
       "**/node_modules/sharp/**"
