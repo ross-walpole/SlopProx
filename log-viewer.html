@@ -1,0 +1,503 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>SlopProx — Debug Console</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --green:   #33d17a;
+      --green-d: #1a6b3c;
+      --dim:     #3a6b4f;
+      --bg:      #060909;
+      --bg2:     #0d1410;
+      --bg3:     #111a14;
+      --border:  #1c2e22;
+      --red:     #ff5555;
+      --cyan:    #2ef8ef;
+      --orange:  #ff9500;
+      --amber:   #f5c518;
+      --purple:  #bf5af2;
+      --blue:    #5ac8fa;
+      --pink:    #ff6b81;
+    }
+
+    html, body {
+      height: 100%;
+      background: var(--bg);
+      color: var(--green);
+      font-family: 'Cascadia Code', 'Cascadia Mono', 'Consolas', 'Courier New', monospace;
+      font-size: 12px;
+      line-height: 1.5;
+      overflow: hidden;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+
+    /* ── Titlebar ──────────────────────────────────────────── */
+    .titlebar {
+      -webkit-app-region: drag;
+      height: 32px;
+      background: var(--bg2);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 10px;
+      flex-shrink: 0;
+    }
+    .titlebar-left { display: flex; align-items: center; gap: 6px; color: var(--dim); font-size: 11px; }
+    .titlebar-dot  { width: 7px; height: 7px; border-radius: 50%; background: var(--green-d); }
+    .titlebar-dot.blink { animation: blink 1.2s ease-in-out infinite; }
+    @keyframes blink { 0%,100% { opacity: 1; } 50% { opacity: 0.25; } }
+    .titlebar-btns { -webkit-app-region: no-drag; display: flex; gap: 4px; }
+    .tb-btn {
+      width: 22px; height: 18px; border: 1px solid var(--border);
+      background: var(--bg3); color: var(--dim);
+      font-size: 11px; cursor: pointer; border-radius: 3px;
+      display: flex; align-items: center; justify-content: center;
+      transition: color .15s, border-color .15s;
+    }
+    .tb-btn:hover { color: var(--green); border-color: var(--green-d); }
+
+    /* ── Logo section ─────────────────────────────────────── */
+    .logo-wrap {
+      background: var(--bg2);
+      border-bottom: 1px solid var(--border);
+      padding: 10px 14px 8px;
+      flex-shrink: 0;
+    }
+    pre.logo {
+      font-size: 8.5px;
+      line-height: 1.25;
+      color: var(--green);
+      letter-spacing: 0;
+      white-space: pre;
+      text-shadow: 0 0 8px rgba(51, 209, 122, 0.45);
+    }
+    .logo-sub {
+      margin-top: 4px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: var(--dim);
+      font-size: 10px;
+    }
+    .logo-sub span { color: var(--green); }
+    .logo-sub .sep { color: var(--border); }
+
+    /* ── Toolbar ──────────────────────────────────────────── */
+    .toolbar {
+      background: var(--bg2);
+      border-bottom: 1px solid var(--border);
+      padding: 5px 10px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-shrink: 0;
+      flex-wrap: wrap;
+    }
+    .filter-btn {
+      padding: 2px 8px;
+      border: 1px solid var(--border);
+      background: transparent;
+      color: var(--dim);
+      font-family: inherit;
+      font-size: 11px;
+      cursor: pointer;
+      border-radius: 3px;
+      transition: all .15s;
+      white-space: nowrap;
+    }
+    .filter-btn:hover { color: var(--green); border-color: var(--green-d); }
+    .filter-btn.active { background: var(--green-d); color: var(--green); border-color: var(--green); }
+    .filter-btn.err-btn.active { background: #4a1010; color: var(--red); border-color: var(--red); }
+    .search-wrap { flex: 1; min-width: 120px; position: relative; }
+    .search-input {
+      width: 100%;
+      background: var(--bg3);
+      border: 1px solid var(--border);
+      color: var(--green);
+      font-family: inherit;
+      font-size: 11px;
+      padding: 2px 6px;
+      border-radius: 3px;
+      outline: none;
+      transition: border-color .15s;
+    }
+    .search-input::placeholder { color: var(--dim); }
+    .search-input:focus { border-color: var(--green-d); }
+    .tool-btn {
+      padding: 2px 8px;
+      border: 1px solid var(--border);
+      background: transparent;
+      color: var(--dim);
+      font-family: inherit;
+      font-size: 11px;
+      cursor: pointer;
+      border-radius: 3px;
+      transition: all .15s;
+      white-space: nowrap;
+    }
+    .tool-btn:hover { color: var(--green); border-color: var(--green-d); }
+    .tool-btn.paused { color: var(--amber); border-color: var(--amber); }
+    .line-count { color: var(--dim); font-size: 10px; margin-left: auto; white-space: nowrap; }
+
+    /* ── Log area ─────────────────────────────────────────── */
+    .log-area {
+      flex: 1;
+      overflow-y: auto;
+      padding: 6px 0;
+      background: var(--bg);
+    }
+    .log-area::-webkit-scrollbar { width: 6px; }
+    .log-area::-webkit-scrollbar-track { background: var(--bg2); }
+    .log-area::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+    .log-area::-webkit-scrollbar-thumb:hover { background: var(--green-d); }
+
+    .log-line {
+      display: flex;
+      padding: 0 12px;
+      line-height: 1.6;
+      font-size: 11.5px;
+      gap: 0;
+      transition: background .08s;
+    }
+    .log-line:hover { background: var(--bg2); }
+    .log-line.new-entry { animation: fadeIn 0.2s ease-out; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateX(-4px); } to { opacity: 1; transform: none; } }
+
+    .ll-ts  { color: var(--dim); flex-shrink: 0; width: 90px; user-select: text; }
+    .ll-sep { color: var(--border); margin: 0 6px; flex-shrink: 0; }
+    .ll-msg { flex: 1; word-break: break-all; user-select: text; white-space: pre-wrap; }
+
+    /* Level colours */
+    .ll-dbg  .ll-msg { color: var(--green); }
+    .ll-err  .ll-msg { color: var(--red); }
+    .ll-err  .ll-ts  { color: #6b2222; }
+    .ll-tls  .ll-msg { color: var(--cyan); }
+    .ll-slop .ll-msg { color: var(--orange); }
+    .ll-ad   .ll-msg { color: var(--amber); }
+    .ll-yt   .ll-msg { color: var(--pink); }
+    .ll-bypass .ll-msg { color: var(--purple); }
+    .ll-proxy  .ll-msg { color: #5af278; }
+    .ll-cert   .ll-msg { color: var(--blue); }
+    .ll-img    .ll-msg { color: #af8af2; }
+
+    /* ── Empty state ──────────────────────────────────────── */
+    .empty {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      color: var(--dim);
+      gap: 6px;
+      font-size: 11px;
+    }
+    .empty-cursor::after { content: '█'; animation: blink 1s step-end infinite; }
+
+    /* ── Scanline overlay (subtle CRT effect) ─────────────── */
+    body::after {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background: repeating-linear-gradient(
+        to bottom,
+        transparent 0px,
+        transparent 1px,
+        rgba(0,0,0,0.06) 1px,
+        rgba(0,0,0,0.06) 2px
+      );
+      pointer-events: none;
+      z-index: 9999;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Title bar -->
+  <div class="titlebar">
+    <div class="titlebar-left">
+      <div class="titlebar-dot blink" id="liveDot"></div>
+      <span>SlopProx</span>
+      <span style="color:var(--border)">│</span>
+      <span>debug console</span>
+      <span style="color:var(--border)">│</span>
+      <span id="versionLabel">v—</span>
+    </div>
+    <div class="titlebar-btns">
+      <button class="tb-btn" id="btnMin" title="Minimise">─</button>
+      <button class="tb-btn" id="btnClose" title="Close">✕</button>
+    </div>
+  </div>
+
+  <!-- Logo -->
+  <div class="logo-wrap">
+<pre class="logo"> ██████╗ ██╗      ██████╗ ██████╗ ██████╗ ██████╗  ██████╗ ██╗  ██╗
+██╔════╝ ██║     ██╔═══██╗██╔══██╗██╔══██╗██╔══██╗██╔═══██╗╚██╗██╔╝
+╚█████╗  ██║     ██║   ██║██████╔╝██████╔╝██████╔╝██║   ██║ ╚███╔╝
+ ╚═══██╗ ██║     ██║   ██║██╔═══╝ ██╔═══╝ ██╔══██╗██║   ██║ ██╔██╗
+ ██████╔╝███████╗╚██████╔╝██║     ██║     ██║  ██║╚██████╔╝██╔╝ ██╗
+ ╚═════╝ ╚══════╝ ╚═════╝ ╚═╝     ╚═╝     ╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═╝</pre>
+    <div class="logo-sub">
+      <span>AI Slop Filter</span>
+      <span class="sep">│</span>
+      <span>live debug stream</span>
+      <span class="sep">│</span>
+      uptime: <span id="uptimeLabel">0s</span>
+      <span class="sep">│</span>
+      session lines: <span id="sessionCount">0</span>
+    </div>
+  </div>
+
+  <!-- Toolbar -->
+  <div class="toolbar">
+    <button class="filter-btn active" data-filter="all">ALL</button>
+    <button class="filter-btn err-btn" data-filter="err">ERRORS</button>
+    <button class="filter-btn" data-filter="slop">SLOP</button>
+    <button class="filter-btn" data-filter="ad">ADS</button>
+    <button class="filter-btn" data-filter="yt">YOUTUBE</button>
+    <button class="filter-btn" data-filter="tls">TLS</button>
+    <button class="filter-btn" data-filter="proxy">PROXY</button>
+    <div class="search-wrap">
+      <input class="search-input" id="searchInput" type="text" placeholder="search logs…" spellcheck="false">
+    </div>
+    <button class="tool-btn" id="pauseBtn">⏸ pause</button>
+    <button class="tool-btn" id="clearBtn">🗑 clear</button>
+    <span class="line-count" id="lineCount">0 lines</span>
+  </div>
+
+  <!-- Log output -->
+  <div class="log-area" id="logArea">
+    <div class="empty" id="emptyState">
+      <div class="empty-cursor">&nbsp;</div>
+      <div>waiting for events…</div>
+    </div>
+  </div>
+
+<script>
+  const logArea      = document.getElementById('logArea');
+  const emptyState   = document.getElementById('emptyState');
+  const lineCountEl  = document.getElementById('lineCount');
+  const sessionCountEl = document.getElementById('sessionCount');
+  const pauseBtn     = document.getElementById('pauseBtn');
+  const clearBtn     = document.getElementById('clearBtn');
+  const searchInput  = document.getElementById('searchInput');
+  const uptimeLabel  = document.getElementById('uptimeLabel');
+  const versionLabel = document.getElementById('versionLabel');
+
+  // ── State ─────────────────────────────────────────────────
+  let allEntries   = [];   // every entry ever received
+  let paused       = false;
+  let activeFilter = 'all';
+  let searchTerm   = '';
+  let autoScroll   = true;
+  const startTime  = Date.now();
+  let sessionLines = 0;
+
+  // ── Window controls ───────────────────────────────────────
+  document.getElementById('btnMin').addEventListener('click',   () => window.logApi.send('log-window-minimize'));
+  document.getElementById('btnClose').addEventListener('click', () => window.logApi.send('log-window-close'));
+
+  // ── Version label ─────────────────────────────────────────
+  window.logApi.onVersion(v => { versionLabel.textContent = `v${v}`; });
+
+  // ── Uptime counter ────────────────────────────────────────
+  setInterval(() => {
+    const s = Math.floor((Date.now() - startTime) / 1000);
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    const sec = s % 60;
+    if (h > 0) uptimeLabel.textContent = `${h}h ${m}m ${sec}s`;
+    else if (m > 0) uptimeLabel.textContent = `${m}m ${sec}s`;
+    else uptimeLabel.textContent = `${sec}s`;
+  }, 1000);
+
+  // ── Log classification ────────────────────────────────────
+  function classify(entry) {
+    if (entry.level === 'error') return 'err';
+    const m = entry.msg;
+    if (/\[TLS|tls-client-error|TLS noise|ClientHello|SSLV3|certificate/i.test(m)) return 'tls';
+    if (/SLOP|isSlop|\bText \[|filteredCount|filter-count/i.test(m)) return 'slop';
+    if (/Ad blocked|adsBlocked|ads-count/i.test(m)) return 'ad';
+    if (/YouTube|youtubeBlocked|youtube-count|youtube/i.test(m)) return 'yt';
+    if (/bypass|Bypass|suggest-bypass/i.test(m)) return 'bypass';
+    if (/Proxy started|proxy|PAC|port 8081/i.test(m)) return 'proxy';
+    if (/[Cc]ert|CA cert|Installing|cert-ready/i.test(m)) return 'cert';
+    if (/[Ii]mage|imagesBlocked|images-count/i.test(m)) return 'img';
+    return 'dbg';
+  }
+
+  // ── Format timestamp → HH:MM:SS.mmm ──────────────────────
+  function fmtTs(iso) {
+    try {
+      const d = new Date(iso);
+      const hh = String(d.getHours()).padStart(2, '0');
+      const mm = String(d.getMinutes()).padStart(2, '0');
+      const ss = String(d.getSeconds()).padStart(2, '0');
+      const ms = String(d.getMilliseconds()).padStart(3, '0');
+      return `${hh}:${mm}:${ss}.${ms}`;
+    } catch (_) { return '??:??:??.???'; }
+  }
+
+  // ── Clean up message (strip redundant [DEBUG] prefix) ─────
+  function cleanMsg(msg) {
+    return msg.replace(/^\[DEBUG\]\s*/, '');
+  }
+
+  // ── Build a DOM line element ──────────────────────────────
+  function makeLine(entry, animate) {
+    const cls   = classify(entry);
+    const row   = document.createElement('div');
+    row.className = `log-line ll-${cls}${animate ? ' new-entry' : ''}`;
+    row.dataset.cls = cls;
+    row.dataset.msg = entry.msg.toLowerCase();
+
+    const ts  = document.createElement('span');
+    ts.className = 'll-ts';
+    ts.textContent = fmtTs(entry.ts);
+
+    const sep = document.createElement('span');
+    sep.className = 'll-sep';
+    sep.textContent = '│';
+
+    const msg = document.createElement('span');
+    msg.className = 'll-msg';
+    msg.textContent = cleanMsg(entry.msg);
+
+    row.append(ts, sep, msg);
+    return row;
+  }
+
+  // ── Visibility check ──────────────────────────────────────
+  function isVisible(entry, cls) {
+    if (activeFilter !== 'all' && cls !== activeFilter) return false;
+    if (searchTerm && !entry.msg.toLowerCase().includes(searchTerm)) return false;
+    return true;
+  }
+
+  // ── Scroll guard — if user scrolled up, stop auto-scroll ──
+  logArea.addEventListener('scroll', () => {
+    const atBottom = logArea.scrollHeight - logArea.scrollTop - logArea.clientHeight < 40;
+    autoScroll = atBottom;
+  });
+
+  function scrollToBottom() {
+    if (autoScroll) logArea.scrollTop = logArea.scrollHeight;
+  }
+
+  // ── Append a single entry to the DOM ─────────────────────
+  function appendEntry(entry, animate) {
+    const cls = classify(entry);
+    if (!isVisible(entry, cls)) return;
+    emptyState.style.display = 'none';
+    const el = makeLine(entry, animate);
+    logArea.appendChild(el);
+    updateLineCount();
+    scrollToBottom();
+  }
+
+  // ── Full re-render (on filter/search change) ──────────────
+  function rerender() {
+    logArea.innerHTML = '';
+    let shown = 0;
+    for (const entry of allEntries) {
+      const cls = classify(entry);
+      if (!isVisible(entry, cls)) continue;
+      logArea.appendChild(makeLine(entry, false));
+      shown++;
+    }
+    if (shown === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'empty';
+      empty.textContent = activeFilter === 'all'
+        ? (searchTerm ? 'no matches' : 'no logs yet')
+        : `no ${activeFilter.toUpperCase()} events`;
+      logArea.appendChild(empty);
+    }
+    updateLineCount();
+    autoScroll = true;
+    scrollToBottom();
+  }
+
+  function updateLineCount() {
+    const visible = logArea.querySelectorAll('.log-line').length;
+    lineCountEl.textContent = `${visible.toLocaleString()} / ${allEntries.length.toLocaleString()} lines`;
+  }
+
+  // ── Receive history (ring buffer from main) ───────────────
+  window.logApi.onHistory(lines => {
+    allEntries = lines;
+    rerender();
+  });
+
+  // ── Receive live lines ────────────────────────────────────
+  window.logApi.onLine(entry => {
+    allEntries.push(entry);
+    sessionLines++;
+    sessionCountEl.textContent = sessionLines.toLocaleString();
+    if (!paused) appendEntry(entry, true);
+  });
+
+  // ── Filter buttons ────────────────────────────────────────
+  document.querySelectorAll('.filter-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      activeFilter = btn.dataset.filter;
+      rerender();
+    });
+  });
+
+  // ── Search ────────────────────────────────────────────────
+  searchInput.addEventListener('input', () => {
+    searchTerm = searchInput.value.toLowerCase();
+    rerender();
+  });
+
+  // ── Pause / Resume ────────────────────────────────────────
+  pauseBtn.addEventListener('click', () => {
+    paused = !paused;
+    pauseBtn.textContent = paused ? '▶ resume' : '⏸ pause';
+    pauseBtn.classList.toggle('paused', paused);
+    if (!paused) {
+      // flush any entries that arrived while paused
+      rerender();
+    }
+  });
+
+  // ── Clear ─────────────────────────────────────────────────
+  clearBtn.addEventListener('click', () => {
+    allEntries = [];
+    logArea.innerHTML = '';
+    logArea.appendChild(emptyState);
+    emptyState.style.display = '';
+    updateLineCount();
+  });
+
+  // ── Keyboard shortcuts ─────────────────────────────────────
+  document.addEventListener('keydown', e => {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
+      e.preventDefault();
+      searchInput.focus();
+      searchInput.select();
+    }
+    if (e.key === 'Escape') {
+      if (document.activeElement === searchInput) {
+        searchInput.value = '';
+        searchTerm = '';
+        rerender();
+        searchInput.blur();
+      }
+    }
+    if ((e.ctrlKey || e.metaKey) && e.key === 'l') {
+      e.preventDefault();
+      clearBtn.click();
+    }
+    if (e.key === 'End') { autoScroll = true; scrollToBottom(); }
+  });
+</script>
+</body>
+</html>

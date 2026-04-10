@@ -1,3 +1,5 @@
+// popup.js 
+
 (async () => {
   const dot       = document.getElementById('dot');
   const mainEl    = document.getElementById('main');
@@ -10,8 +12,21 @@
   textCount.textContent = (stored.textBlocked  || 0).toLocaleString();
   imgCount.textContent  = (stored.imagesBlocked || 0).toLocaleString();
 
+  async function fetchWithRetry(url, options, retries = 3) {
+    for (let i = 0; i < retries; i++) {
+      try {
+        const response = await fetch(url, options);
+        if (response.ok) return response;
+        throw new Error(`HTTP ${response.status}`);
+      } catch (err) {
+        if (i === retries - 1) throw err;
+        await new Promise(resolve => setTimeout(resolve, 500 * (i + 1)));
+      }
+    }
+  }
+
   try {
-    const r = await fetch('http://127.0.0.1:8083/status', { signal: AbortSignal.timeout(800) });
+    const r = await fetchWithRetry('http://127.0.0.1:8083/status', { signal: AbortSignal.timeout(800) });
     const { enabled } = await r.json();
     dot.className = 'status-dot ' + (enabled ? 'on' : 'off');
   } catch (_) {

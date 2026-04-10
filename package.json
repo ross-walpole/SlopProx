@@ -2,7 +2,7 @@
   "name": "ai-slop-filter",
   "author": "Ross Walpole",
   "version": "1.9.0",
-  "description": "AI Slop Filter — Clean the internet from AI-generated slop",
+  "description": "SlopProx AI Slop Filter — Reclaim the internet from AI-generated slop.",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
@@ -20,6 +20,11 @@
       "oneClick": false,
       "allowToChangeInstallationDirectory": true
     },
+    "publish": {
+      "provider": "github",
+      "owner": "ross-walpole",
+      "repo": "SlopProx"
+    },
     "asarUnpack": [
       "**/node_modules/sharp/**"
     ]
@@ -27,7 +32,9 @@
   "dependencies": {
     "@huggingface/transformers": "^3.8.1",
     "cheerio": "^1.0.0-rc.12",
-    "mockttp": "^4.2.3"
+    "electron-updater": "^6.8.3",
+    "mockttp": "^4.2.3",
+    "sharp": "^0.34.5"
   },
   "devDependencies": {
     "electron": "^41.0.4",

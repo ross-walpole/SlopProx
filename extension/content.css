@@ -132,9 +132,11 @@
 
 /* ─────────────────────────────────────────────────────────────────
    Image placeholder
-   Fully replaces the <img> element. No wrapping, no absolute
-   positioning — works in flex, grid, overflow:hidden containers.
-   width / height / aspect-ratio set inline by content.js.
+   Inserted as a DOM sibling immediately before the hidden <img> or
+   its link wrapper. Sits in the same layout context (flex row, grid
+   cell, inline flow) so it naturally occupies the original element's
+   space — no absolute positioning, no scroll tracking needed.
+   width / height / aspect-ratio / flex-shrink set inline by content.js.
 ───────────────────────────────────────────────────────────────── */
 
 .sf-img-placeholder {
@@ -142,10 +144,18 @@
   background: #0c0c0c;
   border: 1px solid rgba(239, 68, 68, 0.38);
   border-radius: 8px;
+  display: flex;
   align-items: center;
   justify-content: center;
   min-height: 80px;
   overflow: hidden;
+}
+
+@media (prefers-color-scheme: light) {
+  .sf-img-placeholder {
+    background: #f5f5f5;
+    border-color: rgba(239, 68, 68, 0.45);
+  }
 }
 
 .sf-img-inner {

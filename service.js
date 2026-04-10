@@ -1,21 +1,72 @@
+// service.js
+
 // Single HTTP service: POST /classify, POST /classify-image, GET /status
 // Port 8083, localhost only.
 
-const http = require('http');
+const http   = require('http');
+const crypto = require('crypto');
 const { isAiSlop, isAiImage } = require('./classifier');
 const { debugLog, logError } = require('./logger');
-const state = require('./state');
+const state  = require('./state');
+const counts = require('./counts');
 
 const PORT = 8083;
 let server = null;
+
+// ── Startup request token ──────────────────────────────────────────
+// Generated once at process start. The extension reads it from the shared
+// state and must send it as X-SlopFilter-Token on every request.
+// Prevents arbitrary web pages from calling the local API even if they
+// discover the port — they cannot read the token from the extension's context.
+const SERVICE_TOKEN = crypto.randomBytes(32).toString('hex');
+
+// Exposed so main.js can pass it to the extension via IPC / injected config.
+function getServiceToken() { return SERVICE_TOKEN; }
+
+// ── Token-bucket rate limiter ──────────────────────────────────────
+// Protects model inference from being flooded. Two independent buckets:
+//   text:  20 requests/s — fast model, higher throughput
+//   image:  5 requests/s — slow model + network fetch
+// Buckets refill continuously; burst up to the full capacity is allowed.
+class TokenBucket {
+  constructor(capacity, refillPerSec) {
+    this.capacity     = capacity;
+    this.tokens       = capacity;
+    this.refillPerMs  = refillPerSec / 1000;
+    this.lastRefill   = Date.now();
+  }
+  take() {
+    const now  = Date.now();
+    this.tokens = Math.min(this.capacity, this.tokens + (now - this.lastRefill) * this.refillPerMs);
+    this.lastRefill = now;
+    if (this.tokens < 1) return false;
+    this.tokens--;
+    return true;
+  }
+}
+
+const _textBucket  = new TokenBucket(20, 20);
+const _imageBucket = new TokenBucket(5,   5);
 
 function start(safeSend) {
   if (server) return;
 
   server = http.createServer(async (req, res) => {
-    res.setHeader('Access-Control-Allow-Origin', '*');
+    // ── CORS — only allow the extension's own origin ───────────────
+    // Chrome enforces Origin headers on cross-origin fetches, so web pages
+    // cannot spoof a chrome-extension:// origin. Requests with no Origin
+    // (e.g. same-origin, curl during dev) are allowed through.
+    const origin = req.headers['origin'] || '';
+    const originOk = !origin || origin.startsWith('chrome-extension://');
+    if (!originOk) {
+      res.writeHead(403); res.end(); return;
+    }
+    if (origin) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Vary', 'Origin');
+    }
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-SlopFilter-Token');
     res.setHeader('Access-Control-Allow-Private-Network', 'true');
 
     if (req.method === 'OPTIONS') {
@@ -23,20 +74,36 @@ function start(safeSend) {
     }
 
     // ── GET /status ────────────────────────────────────────────────
+    // Returns the service token so the extension can cache it and include
+    // it in subsequent mutating requests (classify, classify-image).
     if (req.method === 'GET' && req.url === '/status') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({
         enabled: state.FILTER_ENABLED,
         imageDetectionEnabled: state.IMAGE_DETECTION_ENABLED,
         youtubeFilterEnabled: state.YOUTUBE_FILTER_ENABLED,
+        token: SERVICE_TOKEN,
       }));
       return;
+    }
+
+    // ── Token validation for mutating endpoints ────────────────────
+    // /classify and /classify-image require the token obtained from /status.
+    // This prevents arbitrary web pages from abusing the inference endpoints
+    // even if they somehow bypass the CORS check.
+    const incomingToken = req.headers['x-slopfilter-token'] || '';
+    const tokenRequired = req.method === 'POST' && (
+      req.url === '/classify' || req.url === '/classify-image'
+    );
+    if (tokenRequired && incomingToken !== SERVICE_TOKEN) {
+      res.writeHead(401); res.end(); return;
     }
 
     // ── POST /youtube-block ────────────────────────────────────────
     if (req.method === 'POST' && req.url === '/youtube-block') {
       state.youtubeBlocked++;
       safeSend('youtube-count', state.youtubeBlocked);
+      counts.schedule(state);
       debugLog(`YouTube AI-disclosed video blocked (#${state.youtubeBlocked})`);
       res.writeHead(204); res.end();
       return;
@@ -44,10 +111,11 @@ function start(safeSend) {
 
     // ── POST /classify ─────────────────────────────────────────────
     if (req.method === 'POST' && req.url === '/classify') {
+      if (!_textBucket.take()) { res.writeHead(429); res.end(); return; }
       let body = '';
       req.on('data', chunk => {
         body += chunk;
-        if (body.length > 50_000) { req.destroy(); return; }
+        if (body.length > 50_000) { res.writeHead(413); res.end(); req.destroy(); return; }
       });
       req.on('end', async () => {
         if (res.destroyed) return;
@@ -61,11 +129,12 @@ function start(safeSend) {
 
         try {
           const { confidence, method } = await isAiSlop(text);
-          const isSlop = confidence > 0.38;
+          const isSlop = confidence > 0.45;
           debugLog(`Text [${isSlop ? 'SLOP' : 'real'} ${Math.round(confidence * 100)}% ${method}]: "${text.slice(0, 80).replace(/\n/g, ' ')}"`);
           if (isSlop) {
             state.filteredCount++;
             safeSend('filter-count', state.filteredCount);
+            counts.schedule(state);
           }
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ isSlop, confidence: Math.round(confidence * 100), method }));
@@ -82,10 +151,11 @@ function start(safeSend) {
     // Body: the image's src URL (sent by the extension content script).
     // Node.js fetches the URL directly — avoids all CORS/canvas-taint issues.
     if (req.method === 'POST' && req.url === '/classify-image') {
+      if (!_imageBucket.take()) { res.writeHead(429); res.end(); return; }
       let body = '';
       req.on('data', chunk => {
         body += chunk;
-        if (body.length > 4096) { req.destroy(); return; } // URL is short
+        if (body.length > 4096) { res.writeHead(413); res.end(); req.destroy(); return; }
       });
       req.on('end', async () => {
         if (res.destroyed) return;
@@ -100,15 +170,17 @@ function start(safeSend) {
         }
 
         try {
-          const score  = await isAiImage(imageUrl);
-          const isAi   = score > 0.95; // combined score: aiScore*(1-realScore) — false positives cluster at ≤93%, confirmed AI art at 96–100%
+          const { score, style } = await isAiImage(imageUrl);
+          const threshold = 0.75;
+          const isAi = score > threshold;
           if (isAi) {
             state.imagesBlocked++;
             safeSend('images-count', state.imagesBlocked);
+            counts.schedule(state);
           }
-          debugLog(`Image [${isAi ? 'AI' : 'real'} ${Math.round(score * 100)}%]: ${imageUrl.slice(0, 80)}`);
+          debugLog(`Image [${isAi ? 'AI' : 'real'} ${Math.round(score * 100)}% style=${style} thresh=${threshold}]: ${imageUrl.slice(0, 80)}`);
           res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ isAiImage: isAi, confidence: Math.round(score * 100), method: 'model' }));
+          res.end(JSON.stringify({ isAiImage: isAi, confidence: Math.round(score * 100), method: 'model', style }));
         } catch (err) {
           logError(err);
           res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -134,4 +206,4 @@ function stop() {
   server = null;
 }
 
-module.exports = { start, stop };
+module.exports = { start, stop, PORT, getServiceToken };
