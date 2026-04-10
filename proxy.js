@@ -1,17 +1,14 @@
-// HTTPS MITM proxy — intercepts HTML page navigations, injects the slop-filter
-// script + styles, and blocks ad domains. API calls and social-media traffic are
-// routed DIRECT by the PAC file and never reach this proxy.
-
 const mockttp = require('mockttp');
 const fs      = require('fs');
 const path    = require('path');
 const { isAiSlop }        = require('./classifier');
 const { debugLog, logError } = require('./logger');
-const state = require('./state');
+const state  = require('./state');
+const counts = require('./counts');
+const pac    = require('./pac');
 
 const PORT = 8081;
 
-// Ad-domain blocklist — matched against the request host
 const AD_DOMAINS = [
   'doubleclick.net', 'googlesyndication.com', 'google-analytics.com', 'googletagmanager.com',
   'adnxs.com', 'advertising.com', 'amazon-adsystem.com', 'taboola.com', 'outbrain.com',
@@ -25,21 +22,36 @@ const AD_URL_RE = /\/(ad|ads|advert|banner|pixel|beacon|tracking|analytics|imp|c
 
 const AD_WHITELIST = [
   'youtube.com', 'netflix.com', 'google.com', 'github.com', 'localhost',
-  'wikipedia.org', 'wikimedia.org',   // beacon/analytics paths in wiki URLs
+  'wikipedia.org', 'wikimedia.org',
   'msftconnecttest.com', 'dns.msftncsi.com', 'msftncsi.com',
   'windows.com', 'microsoft.com', 'akadns.net', 'azureedge.net',
 ];
 
 let proxyServer   = null;
 let safeSend      = () => {};
+let showWindow    = () => {};
 let injectedScript = '';
 let injectedStyles = '';
-let pacContent    = '';
 
-// Called once at startup — caches all injected content and wires up the IPC callback.
-function init(sendFn, pac) {
-  safeSend      = sendFn;
-  pacContent    = pac || '';
+const recentSuggestions = new Map(); // hostname → timestamp (deduplication)
+
+function isRealBrowserRequest(req) {
+  if (!req?.headers) return false;
+  const h = req.headers;
+  const hasSecFetch    = !!(h['sec-fetch-mode'] || h['sec-fetch-dest'] || h['sec-fetch-site']);
+  const hasClientHints = !!(h['sec-ch-ua'] || h['sec-ch-ua-mobile'] || h['sec-ch-ua-platform']);
+  const hasUpgrade     = h['upgrade-insecure-requests'] === '1';
+  const ua = String(h['user-agent'] || '');
+  const looksLikeBrowserUA = ua.includes('Mozilla/5.0') && (
+    ua.includes('Chrome/') || ua.includes('Edg/') ||
+    ua.includes('Firefox/') || ua.includes('Brave/') || ua.includes('Safari/')
+  );
+  return hasSecFetch && (hasClientHints || hasUpgrade || looksLikeBrowserUA);
+}
+
+function init(sendFn, showWindowFn) {
+  safeSend   = sendFn;
+  showWindow = showWindowFn || (() => {});
   injectedScript = fs.readFileSync(path.join(__dirname, 'injected.js'),  'utf8');
   injectedStyles = fs.readFileSync(path.join(__dirname, 'injected.css'), 'utf8');
 }
@@ -50,10 +62,6 @@ function isAdRequest(host, urlStr) {
   return AD_DOMAINS.some(d => host.includes(d)) || AD_URL_RE.test(urlStr);
 }
 
-// Extract the nonce value from a Content-Security-Policy header value.
-// When a nonce is present, browsers ignore 'unsafe-inline' — our injected
-// script/style must carry the matching nonce to be executed.
-// The header value may be a string or an array (when multiple CSP headers are sent).
 function extractNonce(cspHeader) {
   if (!cspHeader) return '';
   const csp = Array.isArray(cspHeader) ? cspHeader.join('; ') : String(cspHeader);
@@ -61,48 +69,27 @@ function extractNonce(cspHeader) {
   return m ? m[1] : '';
 }
 
-// Pure string injection — never runs a full HTML parser (cheerio), so it can
-// never corrupt inline JSON blobs, SPA bootstrap data, or signed script content.
 function processHtml(body, cspHeader) {
   let nonce = extractNonce(cspHeader);
-  // Fallback: grab nonce from an existing <script nonce="..."> in the raw HTML
   if (!nonce) {
     const m = body.match(/<script[^>]+nonce="([^"]+)"/i);
     if (m) nonce = m[1];
   }
-
   const nonceAttr = nonce ? ` nonce="${nonce}"` : '';
   const styleTag  = `<style id="sf-styles"${nonceAttr}>${injectedStyles}</style>`;
   const scriptTag = `<script id="sf-script"${nonceAttr}>${injectedScript}</script>`;
-
-  // Insert style just before </head>, script just before </body>.
-  // Use lastIndexOf so we don't match closing tags inside templates/comments.
   let result = body;
   const headClose = result.lastIndexOf('</head>');
   if (headClose !== -1) result = result.slice(0, headClose) + styleTag + result.slice(headClose);
   else result += styleTag;
-
   const bodyClose = result.lastIndexOf('</body>');
   if (bodyClose !== -1) result = result.slice(0, bodyClose) + scriptTag + result.slice(bodyClose);
   else result += scriptTag;
-
   return result;
 }
 
-// Mockttp uses console.error() directly for connection-level errors that are
-// entirely benign in a MITM proxy context (non-HTTP clients, mid-TLS aborts,
-// socket hang-ups during cert install, parse errors from raw TCP traffic).
-// Intercept console.error once to route these to debugLog instead of stderr.
-const _origConsoleError = console.error;
-const _BENIGN_PROXY_RE  = /failed to handle request|parse error|expected http|ECONNRESET|EPIPE/i;
-console.error = (...args) => {
-  const msg = args.map(a => (a && a.message) || String(a)).join(' ');
-  if (_BENIGN_PROXY_RE.test(msg)) { debugLog(`[proxy noise suppressed] ${msg}`); return; }
-  _origConsoleError(...args);
-};
-
 async function start(certsDir) {
-  if (proxyServer) return;
+  if (proxyServer || !state.PROXY_ENABLED) return;
 
   const caCertPath = path.join(certsDir, 'ca.pem');
   const caKeyPath  = path.join(certsDir, 'ca.key');
@@ -110,133 +97,166 @@ async function start(certsDir) {
   try {
     if (!fs.existsSync(caCertPath) || !fs.existsSync(caKeyPath)) {
       debugLog('Generating CA certificate...');
-      const ca = await mockttp.generateCACertificate();
+      const ca = await mockttp.generateCACertificate({
+        subject: { commonName: 'SlopProx', organizationName: 'SlopProx — AI Slop Filter Local CA' }
+      });
       fs.writeFileSync(caCertPath, ca.cert);
       fs.writeFileSync(caKeyPath, ca.key);
       debugLog('CA certificate saved');
+      safeSend('status-update', 'CA certificate installed');
     }
 
+    // ── True TLS passthrough for bypass domains ───────────────────────────────
+    // mockttp's tlsPassthrough option works at the raw socket level, BEFORE
+    // any TLS handshake or cert exchange. For bypassed hosts, mockttp reads
+    // the SNI from the ClientHello and creates a raw TCP tunnel instead of
+    // doing MITM. The client negotiates TLS directly with the real server —
+    // the SlopProx CA cert is never presented. This is the only correct way
+    // to bypass cert rejection in Electron apps, IDEs, games, OutSystems, etc.
+    const tlsPassthrough = (state.BYPASS_DOMAINS || [])
+      .filter(d => !d.includes('*') && !/^\d/.test(d))
+      .map(hostname => ({ hostname }));
+
     proxyServer = mockttp.getLocal({
-      https: { certPath: caCertPath, keyPath: caKeyPath },
-      http2: false, // reduces TLS fingerprint surface
+      https: { certPath: caCertPath, keyPath: caKeyPath, tlsPassthrough },
+      http2: false,
     });
 
     await proxyServer.forAnyRequest().thenPassThrough({
-
-      // ── beforeRequest: intercept our own synthetic endpoints before forwarding ──
       beforeRequest: async (req) => {
         const urlStr = req.url || '';
-
-        // Serve the PAC file. Chrome fetches this as a plain HTTP GET to our port,
-        // so we intercept it here rather than letting it reach the real server.
         if (urlStr.endsWith('/filter.pac')) {
-          return { response: { statusCode: 200, headers: { 'content-type': 'application/x-ns-proxy-autoconfig' }, body: pacContent } };
+          const pacBody = pac.generatePAC(PORT, state.BYPASS_DOMAINS);
+          return { response: { statusCode: 200, headers: { 'content-type': 'application/x-ns-proxy-autoconfig', 'cache-control': 'no-cache, no-store' }, body: pacBody } };
         }
-
-        // ── Proxy-relay endpoints ──────────────────────────────────────────────
-        // injected.js uses relative URLs (/__slop_filter_*) which the browser
-        // treats as same-origin, bypassing CSP connect-src entirely. We handle
-        // them here so they never reach the real server.
+        if (!isRealBrowserRequest(req)) return;
         if (urlStr.endsWith('/__slop_filter_classify') && req.method === 'POST') {
           try {
-            const text = (await req.body.getText()).trim().replace(/\s+/g, ' ');
+            const rawText = await req.body.getText();
+            if (rawText.length > 50000) return { response: { statusCode: 413, headers: {}, body: '' } };
+            const text = rawText.trim().replace(/\s+/g, ' ');
             if (text.length < 60 || !state.FILTER_ENABLED) {
               return { response: { statusCode: 200, headers: { 'content-type': 'application/json' }, body: '{"isSlop":false,"confidence":0}' } };
             }
             const { confidence, method } = await isAiSlop(text);
-            const isSlop = confidence > 0.38;
+            const isSlop = confidence > 0.45;
             debugLog(`Text/proxy [${isSlop ? 'SLOP' : 'real'} ${Math.round(confidence * 100)}% ${method}]: "${text.slice(0, 80)}"`);
-            if (isSlop) { state.filteredCount++; safeSend('filter-count', state.filteredCount); }
+            if (isSlop) { state.filteredCount++; safeSend('filter-count', state.filteredCount); counts.schedule(state); }
             return { response: { statusCode: 200, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ isSlop, confidence: Math.round(confidence * 100), method }) } };
           } catch (_) {
             return { response: { statusCode: 200, headers: { 'content-type': 'application/json' }, body: '{"isSlop":false,"confidence":0}' } };
           }
         }
-
         if (urlStr.endsWith('/__slop_filter_status') && req.method === 'GET') {
           return { response: { statusCode: 200, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ enabled: state.FILTER_ENABLED, youtubeFilterEnabled: state.YOUTUBE_FILTER_ENABLED }) } };
         }
-
         if (urlStr.endsWith('/__slop_filter_youtube') && req.method === 'POST') {
           state.youtubeBlocked++;
           safeSend('youtube-count', state.youtubeBlocked);
+          counts.schedule(state);
           debugLog(`YouTube AI-disclosed video blocked (#${state.youtubeBlocked})`);
           return { response: { statusCode: 204, headers: {} } };
         }
       },
-
-      // ── beforeResponse: ad blocking + HTML injection ───────────────────────
-      // mockttp passes (response, request) — the request is the second param.
       beforeResponse: async (response, req) => {
+        if (!state.PROXY_ENABLED) return;
         const urlStr = req?.url || '';
         let host = '';
         try { host = new URL(urlStr).hostname.toLowerCase(); } catch (_) {}
-
-        // Ad blocking
+        if (state.BYPASS_DOMAINS.some(d => {
+          if (d.includes('*')) {
+            const pattern = d.replace(/\./g, '\\.').replace(/\*/g, '.*');
+            return new RegExp('^' + pattern + '$', 'i').test(host);
+          }
+          return host.includes(d);
+        })) return;
+        if (!isRealBrowserRequest(req)) return;
         if (isAdRequest(host, urlStr)) {
           state.adsBlocked++;
           safeSend('ads-count', state.adsBlocked);
+          counts.schedule(state);
           debugLog(`Ad blocked: ${host}`);
           return { statusCode: 204, headers: {} };
         }
-
         const rawCT = response.headers?.['content-type'];
         const contentType = (Array.isArray(rawCT) ? rawCT[0] : rawCT || '').toLowerCase();
         if (!contentType.includes('text/html')) return;
         if (host === '127.0.0.1' || host === 'localhost') return;
-
-        // Sec-Fetch headers reliably identify genuine page navigations vs XHR/fetch.
-        // Only filter if both headers are present (some clients omit them).
+        if (!state.FILTER_ENABLED) return;
         const reqHeaders = req?.headers || {};
-        const fetchDest  = (reqHeaders['sec-fetch-dest']  || '').toLowerCase();
-        const fetchMode  = (reqHeaders['sec-fetch-mode']  || '').toLowerCase();
+        const fetchDest  = (reqHeaders['sec-fetch-dest'] || '').toLowerCase();
+        const fetchMode  = (reqHeaders['sec-fetch-mode'] || '').toLowerCase();
         if (fetchDest && fetchMode && (fetchMode !== 'navigate' || fetchDest !== 'document')) return;
-
         try {
           if (req?.method && req.method !== 'GET') return;
-
           const body = await response.body.getText();
-          if (!body || body.length < 1000 || body.length > 800_000) return;
-
+          if (!body || body.length < 1000 || body.length > 800000) return;
           debugLog(`Injecting into: ${host} (${body.length} bytes)`);
           const cspHeader = response.headers?.['content-security-policy'] || '';
           const modified  = processHtml(body, cspHeader);
-
           const headers = { ...response.headers };
-          // Normalize CSP to a string — mockttp may return it as an array when the
-          // server sent multiple headers with the same name.
-          if (Array.isArray(headers['content-security-policy'])) {
-            headers['content-security-policy'] = headers['content-security-policy'].join('; ');
-          }
-          // Remove report-only CSP — it would generate noise in the browser console
-          // for our injected elements.
+          if (Array.isArray(headers['content-security-policy'])) headers['content-security-policy'] = headers['content-security-policy'].join('; ');
           delete headers['content-security-policy-report-only'];
-          headers['cache-control']  = 'no-cache, no-store, must-revalidate';
-          headers['pragma']         = 'no-cache';
-          headers['expires']        = '0';
+          headers['cache-control'] = 'no-cache, no-store, must-revalidate';
+          headers['pragma'] = 'no-cache';
+          headers['expires'] = '0';
           headers['content-length'] = Buffer.byteLength(modified, 'utf8').toString();
-
           return { statusCode: response.statusCode, headers, body: modified };
-        } catch (e) {
-          logError(e);
-        }
-      },
+        } catch (e) { logError(e); }
+      }
     });
 
-    // Suppress expected low-level connection errors that mockttp surfaces as
-    // unhandled events. These fire when:
-    //   - Non-HTTP traffic hits the proxy port (OS apps, update services)
-    //   - Browser aborts a connection mid-TLS during cert install window
-    //   - Socket hang-ups on keep-alive connections that the client dropped
-    // None of these indicate a real problem — suppressing keeps the log clean.
-    const BENIGN_ERRORS = /aborted|socket hang up|parse error|expected http|ECONNRESET|EPIPE|ENOTFOUND/i;
-    proxyServer.on('request-error', (req, err) => {
-      if (!BENIGN_ERRORS.test(err?.message || '')) logError(err);
+    let _noiseCount = 0;
+    let _noiseLastLog = 0;
+    const _suppressBenign = () => {
+      _noiseCount++;
+      const now = Date.now();
+      if (now - _noiseLastLog < 300000) return;
+      const mins = _noiseLastLog ? Math.round((now - _noiseLastLog) / 60000) : '?';
+      debugLog(`[TLS noise] ${_noiseCount} background TLS rejections in last ${mins}m — non-browser apps rejecting MITM CA cert (expected)`);
+      _noiseCount = 0;
+      _noiseLastLog = now;
+    };
+
+    proxyServer.on('tls-client-error', (failure) => {
+      const hostname = failure?.tlsMetadata?.sniHostname || failure?.sniHostname || failure?.host || 'unknown-host';
+      // Already bypassed — TLS errors here are expected in-flight noise, don't re-prompt
+      if (state.BYPASS_DOMAINS.includes(hostname)) return;
+      const errStr = JSON.stringify(failure);
+      debugLog(`[TLS ERROR] Host: ${hostname} | Raw Error: ${errStr}`);
+      // Two failure modes for cert rejection:
+      // 1. TLS alert (OpenSSL error string present) — explicit rejection
+      // 2. "closed" after handshakeTimestamp — client saw our CA cert and silently closed
+      //    (common with OutSystems, Electron apps, IDEs, games)
+      const handshakeFailed = failure?.timingEvents?.handshakeTimestamp !== undefined;
+      const isCertError = handshakeFailed || /certificate|CERT|SSLV3_ALERT|alert certificate unknown|UNABLE_TO_GET_ISSUER/i.test(errStr);
+      if (isCertError) {
+        const now = Date.now();
+        const last = recentSuggestions.get(hostname) || 0;
+        if (now - last > 15000) {
+          recentSuggestions.set(hostname, now);
+          debugLog(`[TLS ERROR] Certificate error detected for ${hostname} — sending suggest-bypass toast`);
+          showWindow();
+          safeSend('suggest-bypass', {
+            hostname: hostname,
+            reason: 'Certificate validation failed (common with OutSystems, Discord, IDEs, games, etc.)'
+          });
+        } else {
+          debugLog(`[TLS] Suppressed duplicate toast for ${hostname}`);
+        }
+      } else {
+        // Only count as background noise if it's not a cert rejection we're handling
+        _suppressBenign();
+      }
     });
+
+    proxyServer.on('request-error', _suppressBenign);
+    proxyServer.on('client-error', _suppressBenign);
 
     await proxyServer.start(PORT);
     debugLog(`Proxy started on port ${PORT}`);
     safeSend('status-update', 'AI Slop Filter is running');
+    safeSend('proxy-status', true);
 
   } catch (err) {
     if (err.code === 'EADDRINUSE') {
@@ -248,9 +268,12 @@ async function start(certsDir) {
   }
 }
 
-function stop() {
-  proxyServer?.stop().catch(() => {});
-  proxyServer = null;
+async function stop() {
+  if (proxyServer) {
+    await proxyServer.stop().catch(() => {});
+    proxyServer = null;
+  }
+  safeSend('proxy-status', false);
 }
 
 module.exports = { init, start, stop, PORT };

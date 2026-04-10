@@ -1,72 +1,60 @@
-# SlopProx
+# SlopProx — AI Slop Filter
 
-**SlopProx** is a Windows desktop app that filters AI-generated content from the web in real time — across every browser, every site, without configuration.
-
-> 🌐 [slopprox.com](https://slopprox.com)
+A Windows desktop app that filters AI-generated content from the web in real time — across every browser, every site, without configuration.
 
 ---
 
 ## What it does
 
-SlopProx runs a local HTTPS proxy that intercepts web traffic and automatically detects and hides:
+Runs a local HTTPS proxy that intercepts browser traffic and automatically detects and hides:
 
-- **AI-generated text** — paragraphs and articles written by LLMs, detected using a local transformer model combined with heuristic phrase analysis
-- **AI-generated images** — images produced by Stable Diffusion, DALL-E, Flux, Midjourney and similar tools *(opt-in)*
-- **AI-disclosed YouTube videos** — videos where the creator has declared "Altered or synthetic content" using YouTube's mandatory AI label
-- **Ads and trackers** — requests to known ad networks and tracking domains blocked before they reach the browser
+- **AI-generated text** — detected using a local transformer model blended with heuristic phrase analysis
+- **AI-generated images** — classified by a 3-model on-device ensemble *(opt-in, extension required)*
+- **AI-disclosed YouTube videos** — videos where the creator declared "Altered or synthetic content" via YouTube's mandatory AI label
+- **Ads and trackers** — blocked at the network level before they reach the browser
 
-When content is flagged it is replaced with a compact placeholder showing the confidence score and detection method. One click reveals it.
+Flagged content is replaced with a compact placeholder showing confidence and detection method. One click reveals the original.
 
 ---
 
 ## Architecture
 
-SlopProx operates two parallel detection pipelines that complement each other:
-
 ```
-┌──────────────────────────────────────────────────────┐
-│                      Browser                         │
-└───────────────────┬──────────────────────────────────┘
-                    │
-          ┌─────────▼──────────┐
-          │  PAC File Routing  │  http://127.0.0.1:8081/filter.pac
-          └─────────┬──────────┘
-                    │
-        ┌───────────┴────────────┐
-        │                        │
-┌───────▼──────────┐    ┌────────▼───────┐
-│   HTTPS Proxy    │    │    DIRECT       │
-│   port 8081      │    │  (no proxy)     │
-│                  │    │                 │
-│ • Ad blocking    │    │ • X.com/Twitter │
-│ • HTML injection │    │ • HuggingFace   │
-│ • Text filter    │    │   (model DL)    │
-│ • YouTube filter │    │ • Asset files   │
-└──────────────────┘    │ • API calls     │
-                        └─────────────────┘
+┌─────────────────────────────────────────┐
+│                 Browser                 │
+└──────────────────┬──────────────────────┘
+                   │
+         ┌─────────▼──────────┐
+         │   PAC File Routing  │  127.0.0.1:8081/filter.pac
+         └────────┬───────────┘
+                  │
+      ┌───────────┴────────────┐
+      │                        │
+┌─────▼────────────┐    ┌──────▼──────────┐
+│   HTTPS Proxy    │    │     DIRECT       │
+│   port 8081      │    │   (no proxy)     │
+│                  │    │                  │
+│ • Ad blocking    │    │ • HuggingFace    │
+│ • HTML injection │    │   (model DL)     │
+│ • Text filter    │    │ • API paths      │
+│ • YouTube filter │    │ • Asset files    │
+└──────────────────┘    └─────────────────┘
 
-┌──────────────────────────────────────────────────────┐
-│             Chrome Extension (optional)               │
-│                                                      │
-│  content.js → background.js → Service API :8083      │
-│                                                      │
-│ • Social media card detection (X, LinkedIn, Reddit…) │
-│ • AI image detection                                 │
-│ • YouTube feed card badges                           │
-│ • Session stats in popup                             │
-└──────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────┐
+│         Browser Extension (MV3)         │
+│  content.js → background.js → :8083     │
+│                                         │
+│ • Social media card detection           │
+│ • AI image classification               │
+│ • YouTube feed badges                   │
+└─────────────────────────────────────────┘
 ```
 
-### Proxy pipeline
-An HTTPS MITM proxy (mockttp) intercepts HTML page navigations and injects a detection script and stylesheet into every page. The injected script communicates back to the proxy via relative URLs (`/__slop_filter_classify`, `/__slop_filter_status`) which are handled internally and never forwarded upstream — bypassing CSP `connect-src` restrictions entirely.
+**Proxy pipeline** — An HTTPS MITM proxy (mockttp) intercepts HTML navigations and injects a detection script into every page. The script calls back via relative URLs (`/__slop_filter_classify`, `/__slop_filter_youtube`) handled internally — bypassing CSP `connect-src` restrictions entirely.
 
-### Extension pipeline
-A Chrome MV3 extension runs on every page alongside the proxy. It handles sites where the proxy alone isn't sufficient: social media feeds where cards need to be detected structurally, image classification, and Chrome-only signals. Because Chrome's Private Network Access policy blocks extension content scripts from reaching `localhost`, a background service worker acts as the bridge to the local service on port 8083.
+**Extension pipeline** — A Chrome MV3 extension runs alongside the proxy for sites where structural card access is needed: social media feeds, image detection, and YouTube feed badges. A background service worker bridges to the local service on port 8083 (required by Chrome's Private Network Access policy).
 
-### PAC routing
-The PAC file routes traffic intelligently so the proxy only sees what it needs to:
-- **DIRECT:** HuggingFace CDN (so model downloads complete before the proxy is ready), X.com and Twitter (TLS fingerprint-sensitive), asset files (`.js`, `.css`, images, video, fonts), API path segments (`/api/`, `/graphql/`, `/oauth/`…), WebSocket connections
-- **Proxy:** YouTube watch/shorts pages, all other HTML page navigations
+**PAC routing** — Routes only real browser navigation to the proxy. HuggingFace CDN (model downloads), API paths, asset files (JS/CSS/images/video/fonts), and WebSocket connections go DIRECT. Browser-only detection (`Sec-Fetch-*` / `sec-ch-ua` headers) ensures VS Code, Discord, Steam, and other desktop apps are never intercepted.
 
 ---
 
@@ -74,76 +62,59 @@ The PAC file routes traffic intelligently so the proxy only sees what it needs t
 
 ### AI text detection
 
-Text is classified using a two-stage hybrid approach:
+Two-stage hybrid classification:
 
-**Stage 1 — Heuristic scoring (always available, zero latency)**
+**Stage 1 — Heuristic (always available, zero latency)**
+Scores text against 74 hand-curated LLM-characteristic phrases with word-boundary matching, plus structural signals: sentence length variance, average sentence length, emoji density, list frequency, lexical diversity, and structural openers.
 
-Scores text against 74 hand-curated LLM-characteristic phrases with word-boundary matching — things like *"delve into"*, *"nuanced approach"*, *"without further ado"*, *"game-changer"*, *"actionable insights"*, *"let me know in the comments"* — plus structural signals:
+**Stage 2 — ML model (after first load)**
+Local ONNX transformer (`onnx-community/tmr-ai-text-detector-ONNX`). Blended with heuristic: model 55% / heuristic 45%. A cross-signal penalty reduces false positives when they disagree.
 
-- Sentence length variance (LLMs write unusually uniform sentences)
-- Average sentence length (LLMs cluster in the 20–38 word range)
-- Emoji density
-- Bullet and numbered list frequency
-- Lexical diversity (word repetition ratio)
-- Structural openers: *"In this article"*, *"In conclusion"*, *"Hope you found this"*
-
-**Stage 2 — ML model (when available, 2–6s)**
-
-Local ONNX transformer model (`onnx-community/tmr-ai-text-detector-ONNX`) runs alongside the heuristic. Results are blended:
-- Model carries 55% weight, heuristic 45%
-- A cross-signal penalty applies when they disagree, reducing false positives from single-signal hits
-- Falls back to heuristic-only (at reduced weight) on model timeout
-
-**Threshold:** 38% blended confidence → flagged
-
-Text is classified with **section context** — the nearest preceding heading is prepended to the request, so text under "References" or "About" scores differently than identical text in the article body. No site-specific rules needed.
+Threshold: 38% blended confidence. Text is classified with section context (nearest heading prepended) so identical text under "References" and the article body scores differently.
 
 ### AI image detection
 
-Two ONNX vision models run in parallel:
+Three ONNX vision models running as an ensemble (opt-in, extension required):
 
-**Model A — ViT-Base (`yaya36095/ai-source-detector`, ~84 MB INT8)**
-Classifies images as `stable_diffusion`, `midjourney`, `dalle`, `real`, `other_ai`. Score = `aiScore × (1 − realScore)`. Threshold: 95%.
+| | Model | Size | Role |
+|---|---|---|---|
+| A | `yaya36095/ai-source-detector` | ~84 MB | Multi-label ViT: SD / MJ / DALL-E / real / other |
+| B | `onnx-community/SMOGY-Ai-images-detector-ONNX` | ~52 MB | Binary AI vs Real — veto/confirm role |
+| C | `onnx-community/Deep-Fake-Detector-v2-Model-ONNX` | ~87 MB | Deepfake & synthetic detector — third vote |
 
-**Model B — Swin Transformer (`onnx-community/SMOGY-Ai-images-detector-ONNX`, ~52 MB q4f16)**
-Binary AI vs Real classifier (Flux 83%, DALL-E 91%, SD 88%, SDXL 98%).
-- **Veto role:** If Model A ≥ 95% but Model B < 5% real — suppress (prevents false positives on sports photos, screenshots, polished illustrations)
-- **Confirm role:** If Model A ≥ 50% and Model B ≥ 90% — return confident match (catches newer generators like Flux and Gemini that Model A alone underscores)
+Voting logic: majority of A+B+C votes wins. Model B acts as a veto (suppresses A when it scores <5% AI) and a booster (confirms A when it scores ≥90% AI). C adds an independent third opinion, particularly useful when A and B disagree.
 
-**C2PA manifest check** runs first: scans raw image bytes for the JUMBF `c2pa` namespace and known generator labels (`c2pa.ai.generated`, Adobe Firefly, OpenAI, Imagen 3…). Zero false positives when present, though social media re-encoding limits coverage in practice.
+A C2PA manifest check runs first — scans raw image bytes for generator metadata (Adobe Firefly, OpenAI, Imagen…). Zero false positives when present.
 
-**Page-level prior:** After 4+ images are classified on a page, if ≥ 50% are AI, subsequent borderline images get a +8 confidence boost — AI-heavy pages (AI art galleries, prompt showcase sites) warrant more aggressive filtering.
-
-Images smaller than 300px, GIFs, SVGs, data URIs, and extreme aspect ratios are skipped automatically.
+Images <300px, GIFs, SVGs, data URIs, and extreme aspect ratios are skipped automatically.
 
 ### YouTube AI-disclosure filter
 
-On watch pages and Shorts, SlopProx checks `window.ytInitialPlayerResponse.containsSyntheticMedia` (populated synchronously before first paint) and falls back to a DOM text search for YouTube's "Altered or synthetic content" disclosure string. When found:
+Checks `window.ytInitialPlayerResponse.containsSyntheticMedia` (synchronous, before first paint) and falls back to a DOM text search for YouTube's disclosure string.
 
-- **Watch pages / Shorts:** A full-screen overlay blocks the player, pauses the video, and shows "AI-Disclosed Content". Buttons: *Play anyway* (unblocks the video permanently for that page visit) and *Next video* (Shorts only). Scrolling to the next Short clears the overlay immediately.
-- **Feed and search pages:** The video card is dimmed (`opacity: 0.35`, `grayscale: 0.7`) and badged with *🤖 AI-disclosed*.
+- **Watch / Shorts:** Full-screen overlay pauses the player. Buttons: *Play anyway* or *Next video*.
+- **Feed / search:** Card dimmed and badged *🤖 AI-disclosed*.
 
 ### Ad and tracker blocking
 
-At the proxy level, before responses reach the browser. Matches against a blocklist of 29 ad networks and DSPs (DoubleClick, Taboola, Criteo, AppNexus, Rubicon, Outbrain…) plus a URL pattern catch-all for ad/pixel/beacon/tracking path segments. Returns HTTP 204 for matched requests. A whitelist protects YouTube, Netflix, Google, GitHub, Wikipedia, and Microsoft infrastructure.
+Matched at the proxy level before responses reach the browser. Blocklist of 29 ad networks (DoubleClick, Taboola, Criteo, AppNexus, Rubicon, Outbrain…) plus a URL pattern catch-all for ad/pixel/beacon/tracking segments. Returns HTTP 204. A whitelist protects YouTube, Netflix, Google, GitHub, Wikipedia, and Microsoft infrastructure.
 
 ---
 
 ## Installation
 
 1. Download the installer from the [Releases](../../releases) page
-2. Run `AI Slop Filter Setup.exe` — administrator rights are required to install the CA certificate and configure the system proxy
+2. Run `AI Slop Filter Setup.exe`
 3. The app launches in the system tray and activates automatically
 
-On first run the app generates a self-signed CA certificate and installs it into the Windows and Chrome certificate stores via PowerShell. This is what allows the proxy to intercept HTTPS traffic. If auto-installation fails a *Reinstall Cert* button is available in the dashboard.
+On first run the app generates a self-signed CA certificate ("AI Slop Filter") and installs it into the Windows certificate store via PowerShell — this is what allows the proxy to read HTTPS traffic locally. If auto-install fails, use the *Reinstall Cert* button in the dashboard.
 
-### Chrome extension (recommended)
+### Browser extension (recommended)
 
-The companion extension enables card-level social media filtering, AI image detection, and session statistics. Without it, only proxy-injected text filtering and ad blocking are active.
+Enables card-level social media filtering, AI image detection, and YouTube feed badges. Without it, only proxy text filtering and ad blocking are active.
 
 1. Open the dashboard and click **Install Extension**
-2. Follow the 4-step wizard — it copies the extension path to your clipboard and walks through enabling Developer mode in Chrome
-3. The extension communicates with the local service on `127.0.0.1:8083` and does not require the proxy to be running
+2. Follow the 4-step wizard — it copies the unpacked extension path and walks through enabling Developer mode in Chrome/Brave/Edge
 
 ---
 
@@ -151,22 +122,32 @@ The companion extension enables card-level social media filtering, AI image dete
 
 | Control | What it does |
 |---|---|
-| AI Text Filter | Enables/disables text detection across all sites |
+| AI Text Filter | Enables/disables text detection |
 | Ad Blocker | Enables/disables ad and tracker blocking |
-| Browser Extension | Install wizard and folder opener |
-| AI Image Detection | Opt-in image classifier (loads ~84 MB model on first enable) |
-| YouTube AI Filter | Enables/disables the AI-disclosure overlay and feed badges |
-| Reset Counters | Zeroes all session stats |
-| Reinstall Cert | Re-runs the PowerShell cert install if the proxy shows a cert error |
+| Browser Extension | Install wizard and extension folder opener |
+| AI Image Detection | Opt-in 3-model ensemble (loads ~220 MB on first enable) |
+| YouTube AI Filter | Enables/disables disclosure overlay and feed badges |
+| Reset Counters | Zeroes all lifetime stats |
+| Reinstall Cert | Re-runs PowerShell cert install |
 | Debug Log | Opens the log file in Explorer |
 
-Live counters show total blocked counts for text, ads, images, and YouTube videos for the current session.
+Counters at the top show **all-time totals** for blocked text, ads, images, and YouTube videos — persisted across restarts. An estimated time-saved figure is shown beneath (conservative, Brave-style methodology).
+
+---
+
+## Settings
+
+Accessible via the cog icon in the title bar:
+
+- **Launch at Windows startup** — registers with Windows login items
+- **Minimize to tray** — close button hides the window instead of quitting
+- **Default states** — set which features are on/off when the app launches (image detection requires the extension installed and models loaded at least once)
 
 ---
 
 ## Development
 
-**Requirements:** Node.js 18+, Windows (proxy and system certificate configuration are Windows-only)
+**Requirements:** Node.js 18+, Windows
 
 ```bash
 git clone https://github.com/devR0ss/SlopProx.git
@@ -177,21 +158,20 @@ npm start             # run in development (Electron)
 npm run build         # build NSIS installer → dist/
 ```
 
-The ONNX text classification model is stored in `models/` and tracked with Git LFS. The two image models download automatically from HuggingFace on first use and are cached locally.
+The text model is stored in `models/` and tracked with Git LFS. The three image models download automatically from HuggingFace on first enable and are cached locally.
 
 ### Project structure
 
-| File/Dir | Role |
+| File | Role |
 |---|---|
-| `main.js` | Electron main process — window, tray, IPC, startup/shutdown |
-| `proxy.js` | HTTPS MITM server — HTML injection, ad blocking, relay endpoints |
+| `main.js` | Electron main process — window, tray, IPC, lifecycle |
+| `proxy.js` | HTTPS MITM proxy — HTML injection, ad blocking, relay endpoints |
 | `service.js` | HTTP service (`:8083`) — classification API for the extension |
 | `classifier.js` | All ML inference — text heuristics, model blending, image ensemble |
-| `pac.js` | PAC file generator — routing rules |
+| `pac.js` | PAC file generator |
 | `state.js` | Shared mutable state (feature flags, counters) |
+| `counts.js` | Persistent all-time counter storage (`counts.json`) |
 | `preload.js` | IPC context bridge (renderer ↔ main) |
-| `injected.js` | Script injected into pages via proxy — text filter, YouTube filter |
-| `injected.css` | Styles for placeholders and overlays (proxy pipeline) |
 | `index.html` | Dashboard UI |
 | `extension/` | Chrome MV3 extension — content script, background worker, popup |
 | `models/` | Local ONNX text model (Git LFS) |
@@ -200,7 +180,7 @@ The ONNX text classification model is stored in `models/` and tracked with Git L
 
 ## Privacy
 
-All detection runs **entirely on-device**. No page content, images, or text are sent to any external server. The only network traffic SlopProx generates is the proxied requests to the sites you visit normally, plus one-time model downloads from HuggingFace.
+All detection runs entirely on-device. No browsing data, page content, or images are sent anywhere. The only external traffic is the proxied requests to sites you visit normally, plus one-time model downloads from HuggingFace.
 
 ---
 
@@ -208,7 +188,7 @@ All detection runs **entirely on-device**. No page content, images, or text are 
 
 - **[Electron](https://www.electronjs.org/)** — desktop shell and system tray
 - **[mockttp](https://github.com/httptoolkit/mockttp)** — HTTPS MITM proxy with certificate generation
-- **[@huggingface/transformers](https://huggingface.co/docs/transformers.js)** — local ONNX model inference (text + image)
+- **[@huggingface/transformers](https://huggingface.co/docs/transformers.js)** — local ONNX inference (text + image)
 - **Chrome Extension MV3** — content script for card detection and image filtering
 
 ---

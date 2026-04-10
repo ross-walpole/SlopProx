@@ -1,3 +1,5 @@
+// content.js 
+
 (function () {
   'use strict';
 
@@ -112,9 +114,17 @@
   }
 
   // ── Placeholder event guards ────────────────────────────────────
-  // Capture mousedown/pointerdown when NOT on the reveal button to
-  // prevent background clicks from navigating the underlying post.
-  // The reveal button's own handlers call stopPropagation + preventDefault.
+  // Prevents placeholder clicks from reaching ancestor link/card handlers.
+  //
+  // Two layers:
+  //   1. mousedown capture — blocks drag-start and text-selection on background
+  //   2. click bubble     — stops ALL clicks bubbling past the placeholder,
+  //                         covering parent divs with onclick navigation (LinkedIn,
+  //                         Reddit, Twitter card wrappers, etc.)
+  //
+  // The reveal button's own click handler calls stopPropagation too, but that
+  // only stops propagation from the button upward — this handles the case where
+  // the click lands on the placeholder background rather than the button.
   function installGuards(placeholder) {
     placeholder.addEventListener('mousedown', e => {
       if (!e.target.closest('.sf-reveal-btn')) {
@@ -123,12 +133,47 @@
       }
     }, true);
 
-    placeholder.addEventListener('pointerdown', e => {
-      if (!e.target.closest('.sf-reveal-btn')) e.stopPropagation();
-    }, true);
-
+    // Bubble phase: runs after the button's own click handler (if the click was
+    // on the button, stopPropagation there already prevents this from firing).
+    // Catches background clicks and stops them from reaching any ancestor.
     placeholder.addEventListener('click', e => {
-      if (!e.target.closest('.sf-reveal-btn')) e.stopPropagation();
+      e.stopPropagation();
+      if (!e.target.closest('.sf-reveal-btn')) e.preventDefault();
+    });
+  }
+
+  // ── Text classification batch queue ────────────────────────────
+  // Buffers classify requests for 50 ms then sends them as a single
+  // background message, cutting per-page HTTP round-trips by ~70%.
+  // Each entry: { text, resolve } where resolve(result) fires on completion.
+  const _textBatchQueue = [];
+  let _textBatchTimer = null;
+
+  function _flushTextBatch() {
+    _textBatchTimer = null;
+    if (!_textBatchQueue.length) return;
+    const batch = _textBatchQueue.splice(0);
+    // Send all texts at once; background.js issues one /classify call per item
+    // but they share a single message channel round-trip.
+    Promise.allSettled(
+      batch.map(({ text }) =>
+        new Promise(res => {
+          chrome.runtime.sendMessage({ type: 'classify', text })
+            .then(r => res(r))
+            .catch(() => res({ ok: false }));
+        })
+      )
+    ).then(results => {
+      results.forEach((r, i) => {
+        batch[i].resolve(r.status === 'fulfilled' ? r.value : { ok: false });
+      });
+    });
+  }
+
+  function _batchClassifyText(text) {
+    return new Promise(resolve => {
+      _textBatchQueue.push({ text, resolve });
+      if (!_textBatchTimer) _textBatchTimer = setTimeout(_flushTextBatch, 50);
     });
   }
 
@@ -157,7 +202,11 @@
           else p.remove();
         });
         document.querySelectorAll('.sf-img-placeholder').forEach(p => {
-          if (p._sfImg && p.parentNode) p.parentNode.insertBefore(p._sfImg, p);
+          if (p._sfTarget) {
+            p._sfTarget.style.opacity = '';
+            p._sfTarget.style.pointerEvents = '';
+            delete p._sfTarget.dataset.sfImgBlurred;
+          }
           if (p._sfVideo && p._sfVideoPaused === false) p._sfVideo.play().catch(() => {});
           p.remove();
         });
@@ -230,6 +279,7 @@
       };
 
       const btn = placeholder.querySelector('.sf-reveal-btn');
+      btn.style.pointerEvents = 'auto';
       btn.addEventListener('pointerup', doReveal);
       btn.addEventListener('click',     doReveal);
 
@@ -323,7 +373,7 @@
     if (text.length < MIN_LEN) return;
 
     try {
-      const resp = await chrome.runtime.sendMessage({ type: 'classify', text });
+      const resp = await _batchClassifyText(text);
       if (!resp?.ok) return;
       const { isSlop, confidence, method } = resp.data;
       if (isSlop) applyCardSlop(card, confidence, 'text', undefined, method);
@@ -352,7 +402,7 @@
     el.dataset.slopChecked = 'true';
 
     try {
-      const resp = await chrome.runtime.sendMessage({ type: 'classify', text: getClassifyText(el) });
+      const resp = await _batchClassifyText(getClassifyText(el));
       if (!resp?.ok) return;
       const { isSlop, confidence, method } = resp.data;
       if (isSlop) applyTextSlop(el, confidence, method);
@@ -398,6 +448,7 @@
       };
 
       const btn = placeholder.querySelector('.sf-reveal-btn');
+      btn.style.pointerEvents = 'auto';
       btn.addEventListener('pointerup', doReveal);
       btn.addEventListener('click',     doReveal);
 
@@ -410,21 +461,33 @@
   }
 
   // ── Page-level AI density prior ─────────────────────────────────
-  // Once enough images have been classified on this page, if ≥50% were AI
-  // we apply a +8 confidence boost to subsequent borderline images.
-  // No downward penalty — the model's own scores handle real content.
+  // After 4+ completed classifications, the page AI ratio adjusts the
+  // effective threshold for subsequent borderline images:
+  //   ≥ 50% AI  → +8 boost  (AI-heavy page, lower threshold)
+  //   ≤ 10% AI  → −8 penalty (real-photo page, raise threshold)
+  //   otherwise → no adjustment
   //
   // pageCompletedCount tracks COMPLETED classifications (not pending),
-  // so the ratio is accurate when the adjustment fires.
+  // so the ratio is always accurate when the adjustment fires.
   let pageAiCount        = 0;  // confirmed AI images this page
   let pageCompletedCount = 0;  // completed classifications this page
 
-  function getPagePriorAdjustment() {
-    if (pageCompletedCount < 4) return 0;              // not enough data yet
-    const ratio = pageAiCount / pageCompletedCount;
-    if (ratio >= 0.5) return 8;                        // AI-heavy page → lower effective threshold
-    return 0;                                          // no penalty on real-content pages
+  // LRU page image cache — capped at 500 to bound memory on infinite-scroll pages.
+  const PAGE_CACHE_MAX = 500;
+  const pageImageCache = new Map(); // src → {blocked: bool, confidence}
+  function _pageImageCacheSet(key, value) {
+    if (pageImageCache.has(key)) pageImageCache.delete(key);
+    else if (pageImageCache.size >= PAGE_CACHE_MAX) pageImageCache.delete(pageImageCache.keys().next().value);
+    pageImageCache.set(key, value);
   }
+
+function getPagePriorAdjustment() {
+  if (pageCompletedCount < 4) return 0;
+  const ratio = pageAiCount / pageCompletedCount;
+  if (ratio >= 0.5)  return  5;   // AI-heavy page → moderate boost
+  if (ratio <= 0.10) return -5;   // real-photo page → moderate suppression
+  return 0;
+}
 
   // ── Image classification ────────────────────────────────────────
   function shouldSkipImage(img) {
@@ -456,40 +519,55 @@
 
   async function classifyImage(img) {
     if (!filterEnabled || !imageDetectionEnabled) return;
-    if (shouldSkipImage(img)) return;
+    if (img.dataset.sfQueued || img.dataset.sfProcessing || shouldSkipImage(img)) return;
+
+    const srcKey = img.src.split('?')[0]; // Normalize: ignore query params
+    if (pageImageCache.has(srcKey)) {
+      const cached = pageImageCache.get(srcKey);
+      if (cached.blocked) {
+        applyImageSlop(img, cached.confidence, 'cached');
+      }
+      return;
+    }
+
+    // Skip small images before the HTTP round-trip — saves backend overhead.
     if (img.naturalWidth < IMG_MIN_PX || img.naturalHeight < IMG_MIN_PX) return;
 
-    // Find the card early so the loading blur targets the same element as the
-    // final action. If no card, blur the img itself.
-    const card   = findCardBoundary(img);
-    const scanEl = (card && !card.dataset.sfCardBlurred && !card.dataset.sfRevealed) ? card : img;
+    img.dataset.sfQueued = 'true';
+    img.dataset.sfProcessing = 'true';
 
     // Blur immediately — the user should not see the image before the verdict.
-    scanEl.style.transition = 'filter 0.12s, opacity 0.12s';
-    scanEl.classList.add('sf-scanning');
+    img.style.transition = 'filter 0.12s, opacity 0.12s';
+    img.classList.add('sf-scanning');
 
     try {
       const resp = await chrome.runtime.sendMessage({ type: 'classifyImage', url: img.src });
-      if (!resp?.ok) { _clearScan(scanEl); return; }
+      if (!resp?.ok) { _clearScan(img); return; }
 
       const { isAiImage, confidence, method } = resp.data;
+      // Cache result
+      const shouldBlock = isAiImage;
+      _pageImageCacheSet(srcKey, { blocked: shouldBlock, confidence });
       // Increment AFTER response so ratio is always based on real results.
       pageCompletedCount++;
       // Apply page-level prior: +8 on AI-heavy pages can push borderline images over threshold.
       // Threshold matches service.js: combined > 0.95 → confidence >= 95.
       const adjustedConf = confidence + getPagePriorAdjustment();
-      const shouldBlock  = isAiImage || adjustedConf >= 95;
-      if (shouldBlock) {
+      const blockIt = shouldBlock || adjustedConf >= 92;
+      if (blockIt) {
         pageAiCount++;
         // Snap-remove blur before replacing element — no transition needed.
-        scanEl.style.transition = '';
-        scanEl.classList.remove('sf-scanning');
+        img.style.transition = '';
+        img.classList.remove('sf-scanning');
+        // Clear sfProcessing before applyImageSlop — its guard checks this flag
+        // and would bail immediately if it's still set from the classify request.
+        delete img.dataset.sfProcessing;
         applyImageSlop(img, confidence, method);
       } else {
         // Real image — fade the blur out smoothly.
-        _clearScan(scanEl);
+        _clearScan(img);
       }
-    } catch (_) { _clearScan(scanEl); }
+    } catch (_) { _clearScan(img); }
   }
 
   function findAssociatedVideo(img) {
@@ -504,80 +582,73 @@
   }
 
   function applyImageSlop(img, confidence, method) {
-    if (img.dataset.sfImgBlurred || !img.parentNode) return;
+    if (img.dataset.sfImgBlurred || img.dataset.sfProcessing) return;
+    delete img.dataset.sfProcessing;
     img.dataset.sfImgBlurred = 'true';
+    if (!img.parentNode) return;
 
-    // ── 1. Full post card: replace the whole card ───────────────────
-    const card = findCardBoundary(img);
-    if (card) {
-      const video = findAssociatedVideo(img);
-      if (video && !video.paused) video.pause();
-      applyCardSlop(card, confidence, 'image', undefined, method);
-      return;
-    }
-
-    // ── 2. Image inside a link/button: hide the wrapper, not the img ─
-    //
-    // If the img lives inside an <a href> or <button>, inserting the
-    // placeholder INSIDE the link causes button clicks to propagate to
-    // the link and trigger navigation (Wikipedia, image galleries, etc.).
-    // Fix: treat the link wrapper as the card boundary — display:none it
-    // and insert the placeholder as a sibling outside the link entirely.
-    //
-    const linkWrapper = img.closest('a[href], button');
-    if (linkWrapper && !linkWrapper.dataset.sfCardBlurred && !linkWrapper.dataset.sfRevealed) {
-      const lrect = linkWrapper.getBoundingClientRect();
-      if (lrect.width > 80 && lrect.height > 50) {
-        applyCardSlop(linkWrapper, confidence, 'image', 'Show image', method);
-        return;
-      }
-    }
-
-    // ── 3. Standalone image: replace <img> with sized placeholder ────
     try {
-      const nw = img.naturalWidth  || parseInt(img.getAttribute('width')  || '0', 10);
-      const nh = img.naturalHeight || parseInt(img.getAttribute('height') || '0', 10);
-
-      // Measure the actual rendered rect before we touch the DOM.
-      // This is the most reliable source of the image's on-screen size —
-      // CSS rules, flex/grid layout, and srcset all affect it but are not
-      // exposed through the HTML attributes.
-      const renderedRect = img.getBoundingClientRect();
-      const renderedW = Math.round(renderedRect.width);
-      const renderedH = Math.round(renderedRect.height);
-
       const video = findAssociatedVideo(img);
       const weStartedVideo = video && !video.paused;
       if (weStartedVideo) video.pause();
 
-      const placeholder = document.createElement('div');
-      placeholder.className = 'sf-img-placeholder';
-      placeholder._sfImg         = img;
-      placeholder._sfVideo       = video || null;
-      placeholder._sfVideoPaused = weStartedVideo ? false : null;
-      installGuards(placeholder);
-
-      const display = getComputedStyle(img).display;
-      placeholder.style.display = (display === 'inline' || display === 'inline-block')
-        ? 'inline-flex' : 'flex';
-
-      if (renderedW > 0 && renderedH > 0) {
-        // Exact pixel match — no layout shift
-        placeholder.style.width  = renderedW + 'px';
-        placeholder.style.height = renderedH + 'px';
-      } else {
-        // Fallback for images not yet laid out (lazy-load, offscreen)
-        if (img.style.width)                placeholder.style.width  = img.style.width;
-        else if (img.getAttribute('width')) placeholder.style.width  = img.getAttribute('width') + 'px';
-        else                                placeholder.style.width  = '100%';
-
-        if (img.style.height)                placeholder.style.height = img.style.height;
-        else if (img.getAttribute('height')) placeholder.style.height = img.getAttribute('height') + 'px';
-
-        if (nw && nh) placeholder.style.aspectRatio = `${nw} / ${nh}`;
-        else if (!img.getAttribute('height')) placeholder.style.minHeight = '160px';
+      // Find the nearest positioned ancestor (up to 6 levels).
+      // Appending inside it keeps our placeholder within the same clipping /
+      // stacking context, so overflow:hidden on a parent container cannot clip us.
+      let container = img.parentElement;
+      for (let i = 0; i < 6 && container && container !== document.body; i++) {
+        if (getComputedStyle(container).position !== 'static') break;
+        container = container.parentElement;
+      }
+      if (!container || container === document.body) {
+        container = img.parentElement;
+        if (getComputedStyle(container).position === 'static') {
+          container.style.position = 'relative';
+        }
       }
 
+      // Use opacity:0 + pointer-events:none instead of display:none.
+      // This keeps the image in the layout flow so the container does not
+      // collapse — critical for h-full / w-full / flex images on Reddit,
+      // Twitter, LinkedIn, etc. where display:none shrinks the cell to zero
+      // and overflow:hidden then clips the placeholder.
+      img.style.opacity = '0';
+      img.style.pointerEvents = 'none';
+
+      // Measure both rects AFTER hiding the image (opacity doesn't affect layout
+      // so positions stay identical to the visible state).
+      const imgRect       = img.getBoundingClientRect();
+      const containerRect = container.getBoundingClientRect();
+
+      const placeholder = document.createElement('div');
+      placeholder.className      = 'sf-img-placeholder';
+      placeholder._sfTarget      = img;
+      placeholder._sfVideo       = video || null;
+      placeholder._sfVideoPaused = weStartedVideo ? false : null;
+
+      placeholder.style.position = 'absolute';
+      placeholder.style.zIndex   = '2147483647';
+
+      // If the image essentially fills the container (within 8 px on each axis),
+      // use inset:0 so the overlay automatically tracks any future container resize.
+      // Otherwise pin to the exact measured offset so we don't cover sibling content.
+      const fillsContainer =
+        Math.abs(imgRect.width  - containerRect.width)  < 8 &&
+        Math.abs(imgRect.height - containerRect.height) < 8;
+      const nearOrigin =
+        imgRect.top  - containerRect.top  < 4 &&
+        imgRect.left - containerRect.left < 4;
+
+      if (fillsContainer || nearOrigin) {
+        placeholder.style.inset = '0';
+      } else {
+        placeholder.style.top    = (imgRect.top  - containerRect.top)  + 'px';
+        placeholder.style.left   = (imgRect.left - containerRect.left) + 'px';
+        placeholder.style.width  = imgRect.width  + 'px';
+        placeholder.style.height = imgRect.height + 'px';
+      }
+
+      const nw = img.naturalWidth || parseInt(img.getAttribute('width') || '0', 10);
       if (nw > 0 && nw < 500) placeholder.classList.add('sf-compact');
 
       placeholder.innerHTML = `
@@ -598,9 +669,9 @@
         e.stopPropagation();
         e.stopImmediatePropagation();
         e.preventDefault();
-        if (placeholder._sfImg && placeholder.parentNode) {
-          placeholder.parentNode.insertBefore(placeholder._sfImg, placeholder);
-        }
+        img.style.opacity = '';
+        img.style.pointerEvents = '';
+        delete img.dataset.sfImgBlurred;
         if (placeholder._sfVideo && placeholder._sfVideoPaused === false) {
           placeholder._sfVideo.play().catch(() => {});
         }
@@ -608,16 +679,20 @@
       };
 
       const btn = placeholder.querySelector('.sf-reveal-btn');
-      btn.addEventListener('pointerup', doReveal);
-      btn.addEventListener('click',     doReveal);
+      btn.addEventListener('click', doReveal);
+      installGuards(placeholder);
 
-      img.parentNode.insertBefore(placeholder, img);
-      img.remove();
+      container.appendChild(placeholder);
 
       chrome.storage.session.get('imagesBlocked').then(s => {
         chrome.storage.session.set({ imagesBlocked: (s.imagesBlocked || 0) + 1 });
       }).catch(() => {});
-    } catch (_) {}
+    } catch (err) {
+      console.error('[sf] applyImageSlop:', err);
+      img.style.opacity = '';
+      img.style.pointerEvents = '';
+      delete img.dataset.sfImgBlurred;
+    }
   }
 
   // ── YouTube AI-label filter ─────────────────────────────────────
@@ -872,9 +947,10 @@
 
   // ── SPA navigation hooks ────────────────────────────────────────
   function onNavigate() {
-    // Reset page-level prior on every navigation — new page, fresh context
+    // Reset page-level prior and cache on every navigation — new page, fresh context
     pageAiCount        = 0;
     pageCompletedCount = 0;
+    pageImageCache.clear();
     // Clean up the YouTube block immediately so overlay and interceptor don't
     // linger while the next video loads. The scan runs after a short delay.
     cleanupYtBlock();

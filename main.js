@@ -1,437 +1,569 @@
-const { app, BrowserWindow, Tray, Menu, ipcMain, nativeImage, shell, clipboard } = require('electron');
-const { exec, execSync, execFile } = require('child_process');
+const { app, BrowserWindow, Tray, Menu, ipcMain, shell, Notification } = require('electron');
+const { execSync, execFile } = require('child_process');
 const path = require('path');
 const fs   = require('fs');
 
-const logger     = require('./logger');
-const state      = require('./state');
-const classifier = require('./classifier');
-const proxy      = require('./proxy');
-const service    = require('./service');
+const { autoUpdater }  = require('electron-updater');
+const logger           = require('./logger');
+const state            = require('./state');
+const counts           = require('./counts');
+const classifier       = require('./classifier');
+const proxy            = require('./proxy');
+const service          = require('./service');
 
 process.on('uncaughtException',  err => logger.logError(err));
 process.on('unhandledRejection', err => logger.logError(err));
 
-let mainWindow   = null;
-let tray         = null;
-let isQuitting   = false;
-let certsDir     = null;
-let caCertPath   = null;
-let activePacUrl = null;
-let extDestPath  = null; // set after installExtension; used by open-extension-folder
+// Suppress mockttp's own console.error for TLS handshake failures — our
+// tls-client-error handler already logs these via debugLog with proper context.
+// Without this, every cert rejection prints a raw Error object to the console
+// in addition to our formatted [TLS ERROR] line (duplicate noise).
+const _origConsoleError = console.error.bind(console);
+console.error = (...args) => {
+  const first = String(args[0] ?? '');
+  if (/^Unknown TLS error:/i.test(first)) return;
+  _origConsoleError(...args);
+};
 
-// ── IPC send helper ──────────────────────────────────────────────
+// ── Settings ──────────────────────────────────────────────────────
+// Persists only user-controlled preferences — NOT runtime counters or state.
+const SETTINGS_DEFAULTS = {
+  launchAtStartup:       false,
+  minimizeToTray:        true,
+  defaultTextFilter:     true,
+  defaultAdBlocker:      true,
+  defaultImageDetection: false,
+  defaultYoutubeFilter:  true,
+  imageModelsReady:      false,
+  PROXY_ENABLED:   true,
+  BYPASS_DOMAINS:  state.BYPASS_DOMAINS.slice(),
+};
+
+function _settingsPath() { return path.join(app.getPath('userData'), 'settings.json'); }
+
+function _loadSettings() {
+  try { return JSON.parse(fs.readFileSync(_settingsPath(), 'utf8')); } catch { return {}; }
+}
+
+function _saveSettings(patch) {
+  try {
+    const current = _loadSettings();
+    fs.writeFileSync(_settingsPath(), JSON.stringify({ ...current, ...patch }, null, 2));
+  } catch (err) { logger.logError(err); }
+}
+
+function _getSettings() {
+  const saved = _loadSettings();
+  // Auto-migrate: if imageModelsReady was never persisted but the model file
+  // is already on disk (installed before the settings system existed), mark ready.
+  if (!saved.imageModelsReady) {
+    const modelFile = path.join(__dirname, 'models', 'ai-source-detector-onnx', 'onnx', 'model_quantized.onnx');
+    if (fs.existsSync(modelFile)) {
+      saved.imageModelsReady = true;
+      _saveSettings({ imageModelsReady: true });
+    }
+  }
+  return { ...SETTINGS_DEFAULTS, ...saved };
+}
+
+// ── App-level vars ────────────────────────────────────────────────
+let mainWindow      = null;
+let logWindow       = null;
+let tray            = null;
+let isQuitting      = false;
+let _minimizeToTray = true;
+let certsDir        = null;
+let caCertPath      = null;
+let extDestPath     = null; // set after installExtension; used by open-extension-folder
+
+// ── IPC send helper ───────────────────────────────────────────────
 function safeSend(channel, ...args) {
-  if (mainWindow && !mainWindow.isDestroyed()) {
+  if (mainWindow && !mainWindow.isDestroyed())
     mainWindow.webContents.send(channel, ...args);
-  }
 }
 
-// ── System proxy (Windows) ───────────────────────────────────────
-function setSystemProxy(enable) {
-  if (!enable) {
-    const cmd =
-      `netsh winhttp reset proxy & ` +
-      `reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings" /v ProxyEnable /t REG_DWORD /d 0 /f & ` +
-      `reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings" /v AutoConfigURL /t REG_SZ /d "" /f`;
-    exec(cmd, { windowsHide: true }, err => {
-      if (err) logger.logError(err);
-      else logger.debugLog('System proxy disabled');
-    });
-    return;
-  }
-
-  if (activePacUrl) {
-    const cmd =
-      `reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings" /v AutoConfigURL /t REG_SZ /d "${activePacUrl}" /f & ` +
-      `reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings" /v ProxyEnable /t REG_DWORD /d 0 /f & ` +
-      `reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings" /v ProxyOverride /t REG_SZ /d "127.0.0.1;localhost;<local>" /f`;
-    exec(cmd, { windowsHide: true }, err => {
-      if (err) logger.logError(err);
-      else logger.debugLog(`System PAC proxy enabled: ${activePacUrl}`);
-    });
-    return;
-  }
-
-  const addr = `127.0.0.1:${proxy.PORT}`;
-  const cmd =
-    `netsh winhttp set proxy ${addr} "<local>" & ` +
-    `reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings" /v ProxyServer /t REG_SZ /d ${addr} /f & ` +
-    `reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings" /v ProxyEnable /t REG_DWORD /d 1 /f & ` +
-    `reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings" /v ProxyOverride /t REG_SZ /d "127.0.0.1;localhost;<local>" /f`;
-  exec(cmd, { windowsHide: true }, err => {
-    if (err) logger.logError(err);
-    else logger.debugLog(`System proxy enabled: ${addr}`);
-  });
+// ── System proxy (PAC file) ───────────────────────────────────────
+function setSystemProxy(enabled) {
+  const pacUrl = `http://127.0.0.1:${proxy.PORT}/filter.pac`;
+  try {
+    if (enabled) {
+      execSync(
+        `reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings" /v AutoConfigURL /t REG_SZ /d "${pacUrl}" /f` +
+        ` && reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings" /v ProxyEnable /t REG_DWORD /d 0 /f`,
+        { windowsHide: true }
+      );
+      logger.debugLog(`System proxy set to PAC: ${pacUrl}`);
+    } else {
+      execSync(
+        `reg delete "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings" /v AutoConfigURL /f 2>nul` +
+        ` & reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings" /v ProxyEnable /t REG_DWORD /d 0 /f`,
+        { windowsHide: true }
+      );
+      logger.debugLog('System proxy cleared');
+    }
+  } catch (err) { logger.logError(err); }
 }
 
-// ── Certificate installation ─────────────────────────────────────
+// ── Certificate installation ──────────────────────────────────────
 function installCert() {
   logger.debugLog('Installing CA certificate...');
-  safeSend('status-update', 'Installing CA certificate...');
+  safeSend('status-update', 'Installing certificate...');
   const ps = `Import-Certificate -FilePath '${caCertPath}' -CertStoreLocation Cert:\\CurrentUser\\Root -Confirm:$false`;
   execFile('powershell.exe', ['-Command', ps], { windowsHide: true }, err => {
     if (err) {
       logger.logError(err);
-      safeSend('status-update', 'Auto-install failed — manual cert setup may be needed');
+      safeSend('status-update', 'Cert install failed — click Reinstall Cert to retry');
       safeSend('cert-ready', false);
     } else {
-      safeSend('status-update', 'AI Slop Filter is running');
+      safeSend('status-update', 'SlopProx is running');
       safeSend('cert-ready', true);
     }
   });
 }
 
-// ── Extension helpers ────────────────────────────────────────────
-function getExtDestPath() {
-  return path.join(app.getPath('userData'), 'extension');
-}
-
-function isExtensionInstalled() {
-  return fs.existsSync(path.join(getExtDestPath(), '.installed'));
-}
-
-function copyDirSync(src, dest) {
-  fs.mkdirSync(dest, { recursive: true });
-  for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
-    const s = path.join(src, entry.name);
-    const d = path.join(dest, entry.name);
-    if (entry.isDirectory()) copyDirSync(s, d);
-    else fs.copyFileSync(s, d);
-  }
-}
-
-// Opens the user's default Chromium-based browser to its extensions page.
-//
-// Exe lookup order (stops at first hit):
-//  1. ProgId open command in HKCU\SOFTWARE\Classes  — most authoritative; this
-//     is exactly what Windows uses when you click an https link.
-//  2. ProgId open command in HKLM\SOFTWARE\Classes  — system-wide fallback.
-//  3. HKCU App Paths                                — per-user installs (Brave, Vivaldi, Opera).
-//  4. HKLM App Paths                                — system-wide installs (Edge, some Chrome).
-//  5. Well-known LOCALAPPDATA / Program Files paths — last resort for common browsers.
-
+// ── Extension management ──────────────────────────────────────────
+// Browsers supported for opening the extensions management page.
 const BROWSER_MAP = [
-  // [ProgId fragment, exe name, extensions URL]
-  ['BraveHTML',    'brave.exe',    'chrome://extensions'],  // Brave supports chrome:// alias
-  ['ChromeHTML',   'chrome.exe',   'chrome://extensions'],
-  ['MSEdgeHTM',    'msedge.exe',   'edge://extensions'],
-  ['OperaStable',  'opera.exe',    'opera://extensions'],
-  ['OperaGX',      'opera.exe',    'opera://extensions'],
-  ['VivaldiHTML',  'vivaldi.exe',  'vivaldi://extensions'],
-  ['ChromiumHTM',  'chromium.exe', 'chromium://extensions'],
-  ['WaterfoxHTML', null, null], // Firefox-based — not compatible
-  ['FirefoxHTML',  null, null], // Firefox-based — not compatible
+  ['Brave',   'brave.exe',   'brave://extensions'],
+  ['Chrome',  'chrome.exe',  'chrome://extensions'],
+  ['Edge',    'msedge.exe',  'edge://extensions'],
+  ['Vivaldi', 'vivaldi.exe', 'vivaldi://extensions'],
+  ['Opera',   'opera.exe',   'opera://extensions'],
+  ['Firefox', 'firefox.exe', 'about:debugging#/runtime/this-firefox'],
 ];
 
-const BROWSER_COMMON_PATHS = {
-  'brave.exe':    [
+const BROWSER_PATHS = {
+  'brave.exe':   [
     path.join(process.env.LOCALAPPDATA || '', 'BraveSoftware', 'Brave-Browser', 'Application', 'brave.exe'),
     'C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe',
   ],
-  'chrome.exe':   [
+  'chrome.exe':  [
     path.join(process.env.LOCALAPPDATA || '', 'Google', 'Chrome', 'Application', 'chrome.exe'),
     'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
     'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
   ],
-  'msedge.exe':   [
-    'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
-    'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
-  ],
-  'vivaldi.exe':  [
-    path.join(process.env.LOCALAPPDATA || '', 'Vivaldi', 'Application', 'vivaldi.exe'),
-  ],
-  'opera.exe':    [
+  'msedge.exe':  ['C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
+                  'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe'],
+  'vivaldi.exe': [path.join(process.env.LOCALAPPDATA || '', 'Vivaldi', 'Application', 'vivaldi.exe')],
+  'opera.exe':   [
     path.join(process.env.LOCALAPPDATA || '', 'Programs', 'Opera', 'opera.exe'),
     path.join(process.env.LOCALAPPDATA || '', 'Programs', 'Opera GX', 'opera.exe'),
   ],
 };
 
-// Resolve the full exe path for a browser using all available lookup strategies.
-// Calls done(exePath) on success, done(null) if not found.
-function findExePath(progId, exeName, done) {
-  const steps = [];
-
-  // Steps 1–2: ProgId open command (contains the exact path Windows uses for this browser)
-  if (progId) {
-    for (const hive of ['HKCU', 'HKLM']) {
-      const key = `${hive}\\SOFTWARE\\Classes\\${progId}\\shell\\open\\command`;
-      steps.push(cb => exec(`reg query "${key}" /ve`, { windowsHide: true }, (e, out) => {
-        // Value looks like:  "C:\...\brave.exe" -- "%1"
-        const m = !e && out && out.match(/"([^"]+\.exe)"/i);
-        cb(m && fs.existsSync(m[1]) ? m[1] : null);
-      }));
+function openBrowserExtensionsPage(callback) {
+  for (const [, exe, url] of BROWSER_MAP) {
+    const paths = BROWSER_PATHS[exe] || [];
+    const found = paths.find(p => fs.existsSync(p));
+    if (found) {
+      execFile(found, [url], { windowsHide: false }, err => {
+        if (err) logger.debugLog(`Failed to open ${exe}: ${err.message}`);
+      });
+      return callback(null);
     }
   }
-
-  // Steps 3–4: App Paths (HKCU before HKLM to prefer per-user installs)
-  for (const hive of ['HKCU', 'HKLM']) {
-    const key = `${hive}\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\${exeName}`;
-    steps.push(cb => exec(`reg query "${key}" /ve`, { windowsHide: true }, (e, out) => {
-      const m = !e && out && out.match(/REG_SZ\s+(.+)/);
-      const p = m ? m[1].trim().replace(/"/g, '') : null;
-      cb(p && fs.existsSync(p) ? p : null);
-    }));
-  }
-
-  // Step 5: well-known paths (synchronous fs.existsSync — no async needed)
-  const common = (BROWSER_COMMON_PATHS[exeName] || []).filter(p => fs.existsSync(p));
-  if (common.length) steps.push(cb => cb(common[0]));
-
-  let i = 0;
-  function next() {
-    if (i >= steps.length) return done(null);
-    steps[i++](result => (result ? done(result) : next()));
-  }
-  next();
+  // Fallback: try shell.openExternal with chrome://extensions (works for default browser)
+  shell.openExternal('chrome://extensions').catch(() => {});
+  callback(null);
 }
 
-// Launch a browser exe to a specific URL.
-// Uses cmd's "start" command — this is how Windows itself opens URLs from the shell,
-// and correctly handles single-instance browsers (Brave, Chrome, Edge) that are
-// already running by routing the URL to the existing instance via their IPC channel.
-function launchBrowser(exePath, extUrl) {
-  const safePath = exePath.replace(/"/g, '\\"');
-  exec(`start "" "${safePath}" "${extUrl}"`, { shell: true, windowsHide: true }, e => {
-    if (e) logger.logError(e);
-  });
+function getExtDestPath() {
+  return path.join(app.getPath('userData'), 'extension');
 }
 
-function openBrowserExtensionsPage(callback) {
-  exec(
-    'reg query "HKCU\\Software\\Microsoft\\Windows\\Shell\\Associations\\UrlAssociations\\https\\UserChoice" /v ProgId',
-    { windowsHide: true },
-    (err, stdout) => {
-      const m = !err && stdout && stdout.match(/ProgId\s+REG_SZ\s+(\S+)/i);
-      const progId = m ? m[1] : '';
+function isExtensionInstalled() {
+  const dest = extDestPath || getExtDestPath();
+  return fs.existsSync(path.join(dest, 'manifest.json'));
+}
 
-      const entry = BROWSER_MAP.find(([id]) => progId.toLowerCase().includes(id.toLowerCase()));
+function installExtension() {
+  try {
+    const dest = getExtDestPath();
+    extDestPath = dest;
+    fs.cpSync(path.join(__dirname, 'extension'), dest, { recursive: true, force: true });
+    logger.debugLog(`Extension copied to: ${dest}`);
 
-      if (entry && entry[1]) {
-        const [, exeName, extUrl] = entry;
-        const name = exeName.replace('.exe', '').replace(/^\w/, c => c.toUpperCase());
-        safeSend('browser-detected', { name, extUrl });
-        findExePath(progId, exeName, exePath => {
-          if (exePath) {
-            logger.debugLog(`Launching ${exePath} → ${extUrl}`);
-            launchBrowser(exePath, extUrl);
-            callback(null);
-          } else {
-            logger.debugLog(`Could not locate ${exeName}; falling back to browser scan`);
-            scanInstalledBrowsers(callback);
-          }
-        });
-      } else if (entry && !entry[1]) {
-        logger.debugLog(`Default browser ${progId} is Firefox-based; scanning for Chromium browser`);
-        scanInstalledBrowsers(callback);
-      } else {
-        scanInstalledBrowsers(callback);
+    openBrowserExtensionsPage(err => {
+      if (err) logger.logError(err);
+      safeSend('extension-install-ready', dest);
+      safeSend('extension-installed', isExtensionInstalled());
+    });
+  } catch (err) {
+    logger.logError(err);
+    safeSend('status-update', 'Extension copy failed — see debug log');
+  }
+}
+
+// ── Image model loading ───────────────────────────────────────────
+function _startImageModelLoad() {
+  classifier.loadImageModel(
+    msg => safeSend('status-update', msg),
+    prog => {
+      safeSend('image-model-progress', prog);
+      if (prog.done) {
+        _saveSettings({ imageModelsReady: true });
+        const active = prog.loaded;
+        if (Notification.isSupported()) {
+          new Notification({
+            title: 'Image Detection Ready',
+            body: `${active}-model ensemble active — AI image detection is running`,
+            icon: path.join(__dirname, 'icon.png'),
+          }).show();
+        }
+        safeSend('status-update', `Image detection ready — ${active}-model ensemble active`);
       }
     }
   );
 }
 
-function scanInstalledBrowsers(callback) {
-  const candidates = BROWSER_MAP.filter(e => e[1]);
-  let i = 0;
-  function tryNext() {
-    if (i >= candidates.length) { callback(new Error('No compatible Chromium browser found')); return; }
-    const [, exeName, extUrl] = candidates[i++];
-    findExePath(null, exeName, exePath => {
-      if (exePath) {
-        const name = exeName.replace('.exe', '').replace(/^\w/, c => c.toUpperCase());
-        safeSend('browser-detected', { name, extUrl });
-        logger.debugLog(`Launching ${exePath} → ${extUrl}`);
-        launchBrowser(exePath, extUrl);
-        callback(null);
-      } else {
-        tryNext();
-      }
-    });
-  }
-  tryNext();
-}
-
-function installExtension() {
-  try {
-    const extSrc  = path.join(__dirname, 'extension');
-    const dest    = getExtDestPath();
-    copyDirSync(extSrc, dest);
-    extDestPath = dest;
-
-    // Copy the folder path to clipboard for easy paste into Chrome's "Load unpacked" dialog
-    clipboard.writeText(dest);
-
-    // Write installed flag
-    fs.writeFileSync(path.join(dest, '.installed'), '');
-
-    // Open Chrome/Edge extensions page, then tell the renderer the path and status
-    openBrowserExtensionsPage(err => {
-      if (err) logger.logError(err);
-      safeSend('extension-install-ready', dest);
-      safeSend('extension-installed', true);
-    });
-
-    logger.debugLog(`Extension copied to: ${dest}`);
-  } catch (err) {
-    logger.logError(err);
-    safeSend('status-update', 'Extension install failed — see debug log');
-  }
-}
-
-// ── Window ───────────────────────────────────────────────────────
-function createWindow() {
-  mainWindow = new BrowserWindow({
-    width: 560,
-    height: 780,
-    resizable: false,
-    frame: false,
-    titleBarStyle: 'hidden',
-    backgroundColor: '#0a0a0a',
-    webPreferences: {
-      contextIsolation: true,
-      nodeIntegration: false,
-      preload: path.join(__dirname, 'preload.js'),
-    },
-  });
-
-  mainWindow.loadFile('index.html');
-  mainWindow.setMenu(null);
-
-  mainWindow.webContents.once('did-finish-load', () => {
-    safeSend('filter-status',          state.FILTER_ENABLED);
-    safeSend('adblock-status',         state.AD_BLOCKING_ENABLED);
-    safeSend('image-detection-status', state.IMAGE_DETECTION_ENABLED);
-    safeSend('youtube-filter-status',  state.YOUTUBE_FILTER_ENABLED);
-    safeSend('filter-count',           state.filteredCount);
-    safeSend('ads-count',              state.adsBlocked);
-    safeSend('images-count',           state.imagesBlocked);
-    safeSend('youtube-count',          state.youtubeBlocked);
-    safeSend('extension-installed',    isExtensionInstalled());
-  });
-
-  mainWindow.on('close', e => {
-    if (!isQuitting) { e.preventDefault(); mainWindow.hide(); }
-  });
-}
-
-// ── Tray ─────────────────────────────────────────────────────────
+// ── Tray ──────────────────────────────────────────────────────────
 function updateTray() {
-  const icon = nativeImage.createFromPath(path.join(__dirname, 'icon.png'));
-  if (!tray) {
-    tray = new Tray(icon);
-    tray.on('double-click', () => { mainWindow?.show(); mainWindow?.focus(); });
-  }
-  tray.setToolTip('AI Slop Filter');
+  if (!tray) return;
   tray.setContextMenu(Menu.buildFromTemplate([
-    { label: state.FILTER_ENABLED ? 'Disable Filter' : 'Enable Filter', click: toggleFilter },
-    { label: 'Open Dashboard', click: () => { mainWindow?.show(); mainWindow?.focus(); } },
+    { label: state.PROXY_ENABLED ? 'Proxy: ON' : 'Proxy: OFF', enabled: false },
+    { type: 'separator' },
+    { label: 'Show Dashboard', click: () => { mainWindow?.show(); mainWindow?.focus(); } },
+    { label: state.PROXY_ENABLED ? 'Pause Proxy' : 'Resume Proxy', click: toggleProxy },
     { type: 'separator' },
     { label: 'Quit', click: () => { isQuitting = true; app.quit(); } },
   ]));
 }
 
-// ── Toggle handlers ──────────────────────────────────────────────
-// The proxy runs for the full lifetime of the app (needed for ad blocking regardless
-// of text filter state). Toggling the text filter only gates ML classification —
-// the proxy and system PAC are unaffected.
-function toggleFilter() {
-  state.FILTER_ENABLED = !state.FILTER_ENABLED;
+// ── Feature toggles ───────────────────────────────────────────────
+async function toggleProxy() {
+  state.PROXY_ENABLED = !state.PROXY_ENABLED;
+  if (state.PROXY_ENABLED) {
+    proxy.start(certsDir);
+    setSystemProxy(true);
+  } else {
+    await proxy.stop();
+    // Small delay to let connections close before clearing system proxy
+    setTimeout(() => setSystemProxy(false), 500);
+  }
+  _saveSettings({ PROXY_ENABLED: state.PROXY_ENABLED });
+  safeSend('proxy-status', state.PROXY_ENABLED);
   updateTray();
-  safeSend('filter-status', state.FILTER_ENABLED);
-  logger.debugLog(`Text filter ${state.FILTER_ENABLED ? 'enabled' : 'disabled'}`);
-}
-
-function toggleAdblock() {
-  state.AD_BLOCKING_ENABLED = !state.AD_BLOCKING_ENABLED;
-  safeSend('adblock-status', state.AD_BLOCKING_ENABLED);
-  logger.debugLog(`Ad blocking ${state.AD_BLOCKING_ENABLED ? 'enabled' : 'disabled'}`);
+  logger.debugLog(`Proxy ${state.PROXY_ENABLED ? 'enabled' : 'disabled'}`);
 }
 
 function toggleImageDetection() {
   state.IMAGE_DETECTION_ENABLED = !state.IMAGE_DETECTION_ENABLED;
   safeSend('image-detection-status', state.IMAGE_DETECTION_ENABLED);
   logger.debugLog(`Image detection ${state.IMAGE_DETECTION_ENABLED ? 'enabled' : 'disabled'}`);
-
-  // Load image model on first enable (~84 MB local ONNX)
-  if (state.IMAGE_DETECTION_ENABLED && !classifier.isImageModelReady()) {
-    classifier.loadImageModel(msg => safeSend('status-update', msg));
-  }
+  if (state.IMAGE_DETECTION_ENABLED && !classifier.isImageModelReady())
+    _startImageModelLoad();
 }
 
-function toggleYoutubeFilter() {
-  state.YOUTUBE_FILTER_ENABLED = !state.YOUTUBE_FILTER_ENABLED;
-  safeSend('youtube-filter-status', state.YOUTUBE_FILTER_ENABLED);
-  logger.debugLog(`YouTube AI filter ${state.YOUTUBE_FILTER_ENABLED ? 'enabled' : 'disabled'}`);
+// ── Auto-updater ──────────────────────────────────────────────────
+autoUpdater.autoDownload             = true;
+autoUpdater.autoInstallOnAppQuit     = false;
+
+autoUpdater.on('update-available', info => {
+  logger.debugLog(`Update available: v${info.version}`);
+  safeSend('update-available', info.version);
+});
+autoUpdater.on('download-progress', prog => {
+  safeSend('update-progress', Math.round(prog.percent));
+});
+autoUpdater.on('update-downloaded', info => {
+  logger.debugLog(`Update downloaded: v${info.version}`);
+  safeSend('update-ready', info.version);
+});
+autoUpdater.on('error', err => {
+  logger.debugLog(`Updater: ${err?.message}`);
+});
+
+// ── Window ────────────────────────────────────────────────────────
+function createWindow() {
+  mainWindow = new BrowserWindow({
+    width: 460, height: 720,
+    frame: false, resizable: false,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+  mainWindow.loadFile('index.html');
+  mainWindow.setMenu(null);
+
+  mainWindow.webContents.once('did-finish-load', () => {
+    // Send all initial state to the renderer
+    safeSend('filter-status',          state.FILTER_ENABLED);
+    safeSend('adblock-status',         state.AD_BLOCKING_ENABLED);
+    safeSend('image-detection-status', state.IMAGE_DETECTION_ENABLED);
+    safeSend('youtube-filter-status',  state.YOUTUBE_FILTER_ENABLED);
+    safeSend('proxy-status',           state.PROXY_ENABLED);
+    safeSend('filter-count',           state.filteredCount);
+    safeSend('ads-count',              state.adsBlocked);
+    safeSend('images-count',           state.imagesBlocked);
+    safeSend('youtube-count',          state.youtubeBlocked);
+    safeSend('extension-installed',    isExtensionInstalled());
+    safeSend('settings-loaded',        _getSettings());
+    safeSend('bypass-domains',         { list: state.BYPASS_DOMAINS, protected: state.BYPASS_DOMAINS_PROTECTED });
+
+    // Auto-load image models if enabled on startup
+    if (state.IMAGE_DETECTION_ENABLED && !classifier.isImageModelReady())
+      _startImageModelLoad();
+
+    // Check for updates after UI is ready (packaged builds only)
+    if (app.isPackaged)
+      setTimeout(() => autoUpdater.checkForUpdates(), 5000);
+  });
+
+  mainWindow.on('close', e => {
+    if (!isQuitting && _minimizeToTray) {
+      e.preventDefault();
+      mainWindow.hide();
+    } else {
+      isQuitting = true;
+    }
+  });
+
+  // Enable DevTools with Ctrl+Shift+I
+  mainWindow.webContents.on('before-input-event', (event, input) => {
+    if (input.control && input.shift && input.key.toLowerCase() === 'i') {
+      event.preventDefault();
+      mainWindow.webContents.openDevTools();
+    }
+  });
 }
 
 // ── App lifecycle ─────────────────────────────────────────────────
 app.whenReady().then(async () => {
   const userData = app.getPath('userData');
   logger.init(userData);
+  counts.init(userData);
 
-  const pac     = require('./pac');
-  const pacText = pac.generatePAC(proxy.PORT);
-  activePacUrl  = `http://127.0.0.1:${proxy.PORT}/filter.pac`;
+  // Load and apply persisted settings
+  const settings = _getSettings();
+  _minimizeToTray                = settings.minimizeToTray;
+  state.FILTER_ENABLED           = settings.defaultTextFilter;
+  state.AD_BLOCKING_ENABLED      = settings.defaultAdBlocker;
+  state.IMAGE_DETECTION_ENABLED  = settings.defaultImageDetection
+    && settings.imageModelsReady
+    && isExtensionInstalled();
+  state.YOUTUBE_FILTER_ENABLED   = settings.defaultYoutubeFilter;
+  state.PROXY_ENABLED            = settings.PROXY_ENABLED;
+  state.BYPASS_DOMAINS           = settings.BYPASS_DOMAINS || state.BYPASS_DOMAINS;
+  app.setLoginItemSettings({ openAtLogin: settings.launchAtStartup, openAsHidden: true });
 
-  const cacheDir = path.join(userData, 'transformers-cache');
-  if (!fs.existsSync(cacheDir)) fs.mkdirSync(cacheDir, { recursive: true });
-  process.env.TRANSFORMERS_CACHE = cacheDir;
+  // Seed in-memory counters from persisted all-time totals
+  const savedCounts       = counts.load();
+  state.filteredCount     = savedCounts.filteredCount  || 0;
+  state.adsBlocked        = savedCounts.adsBlocked     || 0;
+  state.imagesBlocked     = savedCounts.imagesBlocked  || 0;
+  state.youtubeBlocked    = savedCounts.youtubeBlocked || 0;
 
+  // Set up paths
   certsDir   = path.join(userData, 'certs');
   caCertPath = path.join(certsDir, 'ca.pem');
   if (!fs.existsSync(certsDir)) fs.mkdirSync(certsDir, { recursive: true });
 
+  // Set transformers cache directory so HuggingFace models land in userData
+  const cacheDir = path.join(userData, 'transformers-cache');
+  if (!fs.existsSync(cacheDir)) fs.mkdirSync(cacheDir, { recursive: true });
+  process.env.TRANSFORMERS_CACHE = cacheDir;
+
   createWindow();
+
+  tray = new Tray(path.join(__dirname, 'icon.png'));
+  tray.setToolTip('SlopProx — AI Slop Filter');
+  tray.on('double-click', () => { mainWindow?.show(); mainWindow?.focus(); });
   updateTray();
 
-  proxy.init(safeSend, pacText);
+  // Init proxy and system proxy
+  proxy.init(safeSend, () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.show();
+      mainWindow.focus();
+      mainWindow.flashFrame(true);
+    }
+  });
+
+  if (state.PROXY_ENABLED) {
+    await proxy.start(certsDir);
+    setSystemProxy(true);
+    setTimeout(installCert, 1500); // small delay so proxy is listening before cert prompt
+  }
+
+  // Start the local classification service (port 8083) for the browser extension
   service.start(safeSend);
 
-  // Clear any stale proxy left from a previous run before model downloads
-  try { execSync('netsh winhttp reset proxy', { stdio: 'ignore', windowsHide: true }); } catch (_) {}
-  try { execSync('reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings" /v ProxyEnable /t REG_DWORD /d 0 /f', { stdio: 'ignore', windowsHide: true }); } catch (_) {}
-  try { execSync('reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings" /v AutoConfigURL /t REG_SZ /d "" /f', { stdio: 'ignore', windowsHide: true }); } catch (_) {}
-
-  await classifier.loadModel(msg => safeSend('status-update', msg));
-
-  // Proxy always starts with the app — it serves ad blocking regardless of text filter state.
-  await proxy.start(certsDir);
-  setSystemProxy(true);
-  setTimeout(installCert, 1500);
-});
-
-app.on('before-quit', () => {
-  proxy.stop();
-  service.stop();
-  try { execSync('netsh winhttp reset proxy', { stdio: 'ignore', windowsHide: true }); } catch (_) {}
-  try { execSync('reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings" /v ProxyEnable /t REG_DWORD /d 0 /f', { stdio: 'ignore', windowsHide: true }); } catch (_) {}
-  try { execSync('reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings" /v AutoConfigURL /t REG_SZ /d "" /f', { stdio: 'ignore', windowsHide: true }); } catch (_) {}
+  // Load the text classifier model
+  classifier.loadModel(msg => safeSend('status-update', msg));
 });
 
 // ── IPC handlers ──────────────────────────────────────────────────
-ipcMain.on('window-minimize',        () => mainWindow?.minimize());
-ipcMain.on('window-close',           () => mainWindow?.close());
-ipcMain.on('toggle-filter',          toggleFilter);
-ipcMain.on('toggle-adblock',         toggleAdblock);
+ipcMain.on('window-minimize', () => mainWindow?.minimize());
+ipcMain.on('window-close',   () => {
+  if (_minimizeToTray && !isQuitting) { mainWindow?.hide(); }
+  else { isQuitting = true; app.quit(); }
+});
+
+ipcMain.on('toggle-filter',          () => {
+  state.FILTER_ENABLED = !state.FILTER_ENABLED;
+  safeSend('filter-status', state.FILTER_ENABLED);
+  logger.debugLog(`Text filter ${state.FILTER_ENABLED ? 'on' : 'off'}`);
+});
+ipcMain.on('toggle-adblock',         () => {
+  state.AD_BLOCKING_ENABLED = !state.AD_BLOCKING_ENABLED;
+  safeSend('adblock-status', state.AD_BLOCKING_ENABLED);
+  logger.debugLog(`Ad blocker ${state.AD_BLOCKING_ENABLED ? 'on' : 'off'}`);
+});
 ipcMain.on('toggle-image-detection', toggleImageDetection);
-ipcMain.on('toggle-youtube-filter',  toggleYoutubeFilter);
-ipcMain.on('reinstall-cert',         installCert);
-ipcMain.on('install-extension',      installExtension);
-ipcMain.on('open-extension-folder',  () => {
+ipcMain.on('toggle-youtube-filter',  () => {
+  state.YOUTUBE_FILTER_ENABLED = !state.YOUTUBE_FILTER_ENABLED;
+  safeSend('youtube-filter-status', state.YOUTUBE_FILTER_ENABLED);
+  logger.debugLog(`YouTube filter ${state.YOUTUBE_FILTER_ENABLED ? 'on' : 'off'}`);
+});
+ipcMain.on('toggle-proxy',           toggleProxy);
+
+ipcMain.on('reinstall-cert', installCert);
+
+ipcMain.on('install-extension',     installExtension);
+ipcMain.on('open-extension-folder', () => {
   const dest = extDestPath || getExtDestPath();
   if (fs.existsSync(dest)) shell.showItemInFolder(dest);
+  else shell.openPath(path.join(__dirname, 'extension'));
 });
-ipcMain.on('open-debug-log',  () => shell.showItemInFolder(logger.debugLogPath));
-ipcMain.on('open-external',  (_, url) => shell.openExternal(url));
+
 ipcMain.on('reset-all', () => {
   state.filteredCount  = 0;
   state.adsBlocked     = 0;
   state.imagesBlocked  = 0;
   state.youtubeBlocked = 0;
+  counts.flush(state);
   safeSend('filter-count',  0);
   safeSend('ads-count',     0);
   safeSend('images-count',  0);
   safeSend('youtube-count', 0);
   safeSend('status-update', 'Counters reset');
+});
+
+function openLogWindow() {
+  if (logWindow && !logWindow.isDestroyed()) { logWindow.show(); logWindow.focus(); return; }
+  logWindow = new BrowserWindow({
+    width: 900, height: 600,
+    minWidth: 680, minHeight: 420,
+    frame: false, resizable: true,
+    title: 'SlopProx — Debug Console',
+    webPreferences: {
+      preload: path.join(__dirname, 'preload-log.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+  logWindow.loadFile('log-viewer.html');
+  logWindow.setMenu(null);
+
+  const logSub = (entry) => {
+    if (logWindow && !logWindow.isDestroyed())
+      logWindow.webContents.send('log-line', entry);
+  };
+  logger.subscribe(logSub);
+
+  logWindow.webContents.once('did-finish-load', () => {
+    logWindow.webContents.send('log-history', logger.getBuffer());
+    logWindow.webContents.send('app-version', app.getVersion());
+  });
+  logWindow.on('closed', () => { logger.unsubscribe(logSub); logWindow = null; });
+}
+
+ipcMain.handle('get-version', () => app.getVersion());
+
+ipcMain.on('open-debug-log',       openLogWindow);
+ipcMain.on('log-window-close',     () => logWindow?.close());
+ipcMain.on('log-window-minimize',  () => logWindow?.minimize());
+
+ipcMain.on('open-external', (_, url) => {
+  if (typeof url === 'string' && /^https?:\/\//i.test(url)) shell.openExternal(url);
+});
+
+ipcMain.on('set-setting', (_, { key, value }) => {
+  _saveSettings({ [key]: value });
+  if (key === 'launchAtStartup') app.setLoginItemSettings({ openAtLogin: !!value, openAsHidden: true });
+  if (key === 'minimizeToTray')  _minimizeToTray = !!value;
+  if (key === 'PROXY_ENABLED')   state.PROXY_ENABLED = !!value;
+});
+
+ipcMain.on('install-update', () => {
+  isQuitting = true;
+  autoUpdater.quitAndInstall();
+});
+
+ipcMain.on('check-for-updates', () => {
+  logger.debugLog('Manual update check requested');
+
+  if (!app.isPackaged) {
+    // In development mode, skip actual check and immediately report no updates
+    logger.debugLog('Development mode: skipping update check');
+    safeSend('update-check-complete', { available: false, currentVersion: app.getVersion() });
+    logger.debugLog('Sent update-check-complete in dev mode');
+    return;
+  }
+
+  safeSend('update-check-start');
+
+  autoUpdater.checkForUpdates()
+    .then(result => {
+      if (result.updateInfo) {
+        // Update available - events will be handled by existing listeners
+        logger.debugLog(`Update available: v${result.updateInfo.version}`);
+      } else {
+        // No update available
+        logger.debugLog('No updates available');
+        safeSend('update-check-complete', { available: false, currentVersion: app.getVersion() });
+      }
+    })
+    .catch(error => {
+      logger.logError(error);
+      safeSend('update-check-error', error.message || 'Failed to check for updates');
+    });
+});
+
+ipcMain.on('add-bypass', (_, hostname) => {
+  if (!hostname || hostname === 'unknown-host') return;
+  const cleanHost = hostname.toLowerCase().trim();
+  if (state.BYPASS_DOMAINS.includes(cleanHost)) return;
+  state.BYPASS_DOMAINS.push(cleanHost);
+  _saveSettings({ BYPASS_DOMAINS: state.BYPASS_DOMAINS });
+  safeSend('bypass-domains', { list: state.BYPASS_DOMAINS, protected: state.BYPASS_DOMAINS_PROTECTED });
+  logger.debugLog(`Added to bypass: ${cleanHost}`);
+  proxy.stop();
+  setTimeout(async () => {
+    await proxy.start(certsDir);
+    setSystemProxy(true); // re-write PAC URL to force WinINet to re-fetch with updated DIRECT entries
+    safeSend('status-update', `Bypass added — reopen ${cleanHost} to reconnect`);
+  }, 800);
+});
+
+ipcMain.on('remove-bypass', (_, hostname) => {
+  if (!hostname) return;
+  const cleanHost = hostname.toLowerCase().trim();
+  if (state.BYPASS_DOMAINS_PROTECTED.includes(cleanHost)) return; // system domain — not removable
+  const idx = state.BYPASS_DOMAINS.indexOf(cleanHost);
+  if (idx === -1) return;
+  state.BYPASS_DOMAINS.splice(idx, 1);
+  _saveSettings({ BYPASS_DOMAINS: state.BYPASS_DOMAINS });
+  safeSend('bypass-domains', { list: state.BYPASS_DOMAINS, protected: state.BYPASS_DOMAINS_PROTECTED });
+  logger.debugLog(`Removed from bypass: ${cleanHost}`);
+  proxy.stop();
+  setTimeout(async () => {
+    await proxy.start(certsDir);
+    setSystemProxy(true); // re-fetch PAC so the host routes through proxy again
+    safeSend('status-update', `Bypass removed — reopen ${cleanHost} to apply`);
+  }, 800);
+});
+
+// ── Quit ──────────────────────────────────────────────────────────
+app.on('before-quit', () => { isQuitting = true; });
+
+app.on('will-quit', () => {
+  // Remove system proxy on clean exit so the browser doesn't get stuck
+  try { setSystemProxy(false); } catch {}
+});
+
+app.on('window-all-closed', () => {
+  if (process.platform !== 'darwin') app.quit();
 });
