@@ -14,8 +14,7 @@ chrome.runtime.onInstalled.addListener(() => {
 
 const BASE = 'http://127.0.0.1:8083';
 
-// Token obtained from /status — required by /classify and /classify-image.
-// Cached here so we only fetch it once per service worker lifecycle.
+// Cached per service worker lifecycle — fetched once from /status.
 let _serviceToken = '';
 
 function _tokenHeaders(extra) {
@@ -29,8 +28,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, respond) => {
     fetch(BASE + '/status', { signal: AbortSignal.timeout(800) })
       .then(r => r.json())
       .then(data => {
-        // Cache the token for subsequent classify calls
-        if (data.token) _serviceToken = data.token;
+          if (data.token) _serviceToken = data.token;
         respond({ ok: true, data });
       })
       .catch(() => respond({ ok: false }));

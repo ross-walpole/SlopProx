@@ -2,8 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 // counts.js — Persistent lifetime counter storage.
-
-// Node's require cache ensures a single instance is shared across main/proxy/service.
+// require() cache guarantees a single shared instance across main/proxy/service.
 
 const fs   = require('fs');
 const path = require('path');

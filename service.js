@@ -1,10 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Ross Walpole <ross.walpole@gmail.com>
 // SPDX-License-Identifier: GPL-3.0-only
 
-// service.js
-
-// Single HTTP service: POST /classify, POST /classify-image, GET /status
-// Port 8083, localhost only.
+// service.js — POST /classify, POST /classify-image, GET /status · port 8083, localhost only.
 
 const http   = require('http');
 const crypto = require('crypto');
@@ -77,8 +74,6 @@ function start(safeSend) {
     }
 
     // ── GET /status ────────────────────────────────────────────────
-    // Returns the service token so the extension can cache it and include
-    // it in subsequent mutating requests (classify, classify-image).
     if (req.method === 'GET' && req.url === '/status') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({
@@ -91,10 +86,7 @@ function start(safeSend) {
       return;
     }
 
-    // ── Token validation for mutating endpoints ────────────────────
-    // /classify and /classify-image require the token obtained from /status.
-    // This prevents arbitrary web pages from abusing the inference endpoints
-    // even if they somehow bypass the CORS check.
+    // ── Token validation ───────────────────────────────────────────
     const incomingToken = req.headers['x-slopfilter-token'] || '';
     const tokenRequired = req.method === 'POST' && (
       req.url === '/classify' || req.url === '/classify-image'
@@ -154,8 +146,6 @@ function start(safeSend) {
     }
 
     // ── POST /classify-image ───────────────────────────────────────
-    // Body: the image's src URL (sent by the extension content script).
-    // Node.js fetches the URL directly — avoids all CORS/canvas-taint issues.
     if (req.method === 'POST' && req.url === '/classify-image') {
       if (!_imageBucket.take()) { res.writeHead(429); res.end(); return; }
       let body = '';

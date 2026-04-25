@@ -329,11 +329,9 @@ function createWindow() {
     safeSend('settings-loaded',        _getSettings());
     safeSend('bypass-domains',         { list: state.BYPASS_DOMAINS, protected: state.BYPASS_DOMAINS_PROTECTED });
 
-    // Auto-load image models if enabled on startup
     if (state.IMAGE_DETECTION_ENABLED && !classifier.isImageModelReady())
       _startImageModelLoad();
 
-    // Check for updates after UI is ready (packaged builds only)
     if (app.isPackaged)
       setTimeout(() => autoUpdater.checkForUpdates().catch(err => logger.debugLog(`Auto-update check failed: ${err?.message}`)), 5000);
   });
@@ -347,7 +345,6 @@ function createWindow() {
     }
   });
 
-  // Enable DevTools with Ctrl+Shift+I
   mainWindow.webContents.on('before-input-event', (event, input) => {
     if (input.control && input.shift && input.key.toLowerCase() === 'i') {
       event.preventDefault();
@@ -391,7 +388,6 @@ app.whenReady().then(async () => {
     }
   } catch (e) { logger.logError(e); }
 
-  // Set up paths
   certsDir   = path.join(userData, 'certs');
   caCertPath = path.join(certsDir, 'ca.pem');
   if (!fs.existsSync(certsDir)) fs.mkdirSync(certsDir, { recursive: true });
@@ -408,7 +404,6 @@ app.whenReady().then(async () => {
   tray.on('double-click', () => { mainWindow?.show(); mainWindow?.focus(); });
   updateTray();
 
-  // Init proxy and system proxy
   proxy.init(safeSend, () => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.show();
@@ -423,10 +418,7 @@ app.whenReady().then(async () => {
     setTimeout(installCert, 1500); // small delay so proxy is listening before cert prompt
   }
 
-  // Start the local classification service (port 8083) for the browser extension
   service.start(safeSend);
-
-  // Load the text classifier model
   classifier.loadModel(msg => safeSend('status-update', msg));
 
   // When proxy is off there is no cert install, so nothing dismisses the startup
