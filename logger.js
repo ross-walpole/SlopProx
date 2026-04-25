@@ -1,10 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Ross Walpole <ross.walpole@gmail.com>
 // SPDX-License-Identifier: GPL-3.0-only
 
-// logger.js — no electron dependency.
-
-// main.js must call logger.init(app.getPath('userData')) before the app starts.
-// Falls back to console-only if init() hasn't been called yet.
+// logger.js — no Electron dependency. Call init(userData) before first use.
 const fs     = require('fs');
 const path   = require('path');
 const crypto = require('crypto');
@@ -31,7 +28,6 @@ function _pushEntry(entry) {
 function init(userDataPath) {
   debugLogPath = path.join(userDataPath, 'debug.log');
   errorLogPath = path.join(userDataPath, 'crash.log');
-  // Rotate logs if >10MB
   rotateIfNeeded(debugLogPath, 10 * 1024 * 1024);
   rotateIfNeeded(errorLogPath, 10 * 1024 * 1024);
 }

@@ -10,7 +10,7 @@ module.exports = {
 
   PROXY_ENABLED: true,
   // Domains the app itself requires — never MITM'd, never removable by the user.
-  // App-specific bypasses (Discord, Steam, OutSystems, etc.) are added dynamically.
+  // App-specific bypasses (IDEs, Apps etc.) are added dynamically.
   BYPASS_DOMAINS_PROTECTED: [
     'localhost',
     '127.0.0.1',
