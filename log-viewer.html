@@ -1,33 +1,49 @@
+<!-- SPDX-FileCopyrightText: 2026 Ross Walpole <ross.walpole@gmail.com> -->
+<!-- SPDX-License-Identifier: GPL-3.0-only -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <title>SlopProx — Debug Console</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     :root {
-      --green:   #33d17a;
-      --green-d: #1a6b3c;
-      --dim:     #3a6b4f;
-      --bg:      #060909;
-      --bg2:     #0d1410;
-      --bg3:     #111a14;
-      --border:  #1c2e22;
-      --red:     #ff5555;
-      --cyan:    #2ef8ef;
-      --orange:  #ff9500;
-      --amber:   #f5c518;
-      --purple:  #bf5af2;
-      --blue:    #5ac8fa;
-      --pink:    #ff6b81;
+      --bg:       #080d09;
+      --bg2:      #0d1610;
+      --bg3:      #111d13;
+      --panel:    #060d07;
+      --border:   #2a4d2e;
+      --border2:  #3d7044;
+      --green:    #6db88a;
+      --green-b:  #9dd4b0;
+      --green-d:  #4a8a62;
+      --green-g:  #060d07;
+      --magenta:  #b84fa0;
+      --magenta-b:#d070be;
+      --magenta-d:#6b2960;
+      --red:      #c06060;
+      --cyan:     #5ab8b0;
+      --orange:   #c47840;
+      --yellow:   #b09030;
+      --pink:     #c05080;
+      --purple:   #7060b0;
+      --blue:     #5080b8;
+      --violet:   #9d86e0;
     }
 
-    html, body {
+    html { height: 100%; }
+
+    body {
       height: 100%;
+      display: flex;
+      flex-direction: column;
       background: var(--bg);
       color: var(--green);
-      font-family: 'Cascadia Code', 'Cascadia Mono', 'Consolas', 'Courier New', monospace;
+      font-family: 'JetBrains Mono', 'Cascadia Code', 'Consolas', 'Courier New', monospace;
       font-size: 12px;
       line-height: 1.5;
       overflow: hidden;
@@ -35,11 +51,11 @@
       -webkit-user-select: none;
     }
 
-    /* ── Titlebar ──────────────────────────────────────────── */
+    /* ── Titlebar ─────────────────────────────────────────────────── */
     .titlebar {
       -webkit-app-region: drag;
-      height: 32px;
-      background: var(--bg2);
+      height: 28px;
+      background: var(--panel);
       border-bottom: 1px solid var(--border);
       display: flex;
       align-items: center;
@@ -47,158 +63,316 @@
       padding: 0 10px;
       flex-shrink: 0;
     }
-    .titlebar-left { display: flex; align-items: center; gap: 6px; color: var(--dim); font-size: 11px; }
-    .titlebar-dot  { width: 7px; height: 7px; border-radius: 50%; background: var(--green-d); }
-    .titlebar-dot.blink { animation: blink 1.2s ease-in-out infinite; }
-    @keyframes blink { 0%,100% { opacity: 1; } 50% { opacity: 0.25; } }
-    .titlebar-btns { -webkit-app-region: no-drag; display: flex; gap: 4px; }
-    .tb-btn {
-      width: 22px; height: 18px; border: 1px solid var(--border);
-      background: var(--bg3); color: var(--dim);
-      font-size: 11px; cursor: pointer; border-radius: 3px;
-      display: flex; align-items: center; justify-content: center;
-      transition: color .15s, border-color .15s;
-    }
-    .tb-btn:hover { color: var(--green); border-color: var(--green-d); }
-
-    /* ── Logo section ─────────────────────────────────────── */
-    .logo-wrap {
-      background: var(--bg2);
-      border-bottom: 1px solid var(--border);
-      padding: 10px 14px 8px;
-      flex-shrink: 0;
-    }
-    pre.logo {
-      font-size: 8.5px;
-      line-height: 1.25;
-      color: var(--green);
-      letter-spacing: 0;
-      white-space: pre;
-      text-shadow: 0 0 8px rgba(51, 209, 122, 0.45);
-    }
-    .logo-sub {
-      margin-top: 4px;
+    .titlebar-left {
       display: flex;
       align-items: center;
-      gap: 10px;
-      color: var(--dim);
+      gap: 8px;
+      color: var(--green-d);
       font-size: 10px;
+      letter-spacing: 0.1em;
     }
-    .logo-sub span { color: var(--green); }
-    .logo-sub .sep { color: var(--border); }
+    .tb-pulse {
+      width: 5px; height: 5px;
+      border-radius: 50%;
+      background: var(--green);
+      box-shadow: 0 0 5px var(--green);
+      animation: pulse-dot 2s ease-in-out infinite;
+      flex-shrink: 0;
+    }
+    @keyframes pulse-dot {
+      0%, 100% { opacity: 1;   box-shadow: 0 0 5px var(--green); }
+      50%       { opacity: 0.2; box-shadow: none; }
+    }
+    .tb-sep { color: var(--border2); }
+    .titlebar-btns {
+      -webkit-app-region: no-drag;
+      display: flex;
+      gap: 4px;
+    }
+    .tb-btn {
+      width: 22px; height: 16px;
+      border: 1px solid var(--border);
+      background: transparent;
+      color: var(--green-d);
+      font-size: 10px;
+      cursor: pointer;
+      border-radius: 2px;
+      display: flex; align-items: center; justify-content: center;
+      transition: color .12s, border-color .12s;
+    }
+    .tb-btn:hover { color: var(--green-b); border-color: var(--green-d); }
 
-    /* ── Toolbar ──────────────────────────────────────────── */
+    /* ── Header panel ─────────────────────────────────────────────── */
+    .header-panel {
+      background: var(--panel);
+      border-bottom: 2px solid var(--border2);
+      padding: 9px 14px 8px;
+      flex-shrink: 0;
+      position: relative;
+    }
+    /* Corner brackets */
+    .header-panel::before,
+    .header-panel::after {
+      content: '';
+      position: absolute;
+      width: 8px; height: 8px;
+      border-color: var(--green-d);
+      border-style: solid;
+      opacity: 0.6;
+    }
+    .header-panel::before { bottom: 6px; left:  6px; border-width: 0 0 1px 1px; }
+    .header-panel::after  { bottom: 6px; right: 6px; border-width: 0 1px 1px 0; }
+
+    .header-identity {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      margin-bottom: 6px;
+    }
+
+    /* The >_ prompt mark — direct lift from the logo */
+    .header-sigil {
+      font-size: 26px;
+      font-weight: 700;
+      line-height: 1;
+      flex-shrink: 0;
+      letter-spacing: -0.04em;
+    }
+    .sigil-chevron {
+      color: var(--magenta);
+      text-shadow:
+        0 0 12px rgba(204,34,170,0.75),
+        0 0 28px rgba(204,34,170,0.3);
+    }
+    .sigil-cursor {
+      color: var(--green-b);
+      text-shadow:
+        0 0 10px rgba(68,255,119,0.7),
+        0 0 22px rgba(68,255,119,0.25);
+      animation: blink-cursor 1.1s step-end infinite;
+    }
+    @keyframes blink-cursor { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+
+    .header-text { flex: 1; }
+
+    .header-title {
+      font-size: 15px;
+      font-weight: 700;
+      color: var(--green-b);
+      letter-spacing: 0.22em;
+      text-shadow: 0 0 16px rgba(68,255,119,0.4);
+      line-height: 1.1;
+    }
+    /* Magenta accent on first letter */
+    .header-title .accent { color: var(--magenta); text-shadow: 0 0 14px rgba(204,34,170,0.6); }
+
+    .header-tagline {
+      font-size: 9px;
+      color: var(--green-d);
+      letter-spacing: 0.14em;
+      margin-top: 2px;
+      text-transform: uppercase;
+    }
+
+    .header-rule {
+      height: 1px;
+      margin: 6px 0 5px;
+      background: linear-gradient(
+        to right,
+        transparent,
+        var(--border2) 10%,
+        var(--green-d) 40%,
+        var(--green-d) 60%,
+        var(--border2) 90%,
+        transparent
+      );
+    }
+
+    .header-meta {
+      display: flex;
+      align-items: center;
+      font-size: 9.5px;
+      color: var(--green-d);
+      letter-spacing: 0.08em;
+    }
+    .hm-item { display: flex; align-items: center; gap: 5px; }
+    .hm-item + .hm-item { margin-left: 12px; }
+    .hm-item + .hm-item::before {
+      content: '◈';
+      margin-right: 12px;
+      color: var(--border2);
+      font-size: 7px;
+    }
+    .hm-val { color: var(--green); }
+    /* Magenta for the "active" status value */
+    .hm-val.hm-active {
+      color: var(--magenta);
+      text-shadow: 0 0 8px rgba(204,34,170,0.5);
+    }
+
+    /* ── Toolbar ──────────────────────────────────────────────────── */
     .toolbar {
       background: var(--bg2);
       border-bottom: 1px solid var(--border);
-      padding: 5px 10px;
+      padding: 4px 10px;
       display: flex;
       align-items: center;
-      gap: 6px;
+      gap: 4px;
       flex-shrink: 0;
-      flex-wrap: wrap;
     }
+
     .filter-btn {
-      padding: 2px 8px;
+      padding: 1px 7px;
       border: 1px solid var(--border);
       background: transparent;
-      color: var(--dim);
+      color: var(--green-d);
       font-family: inherit;
-      font-size: 11px;
+      font-size: 9.5px;
       cursor: pointer;
-      border-radius: 3px;
-      transition: all .15s;
+      border-radius: 2px;
+      transition: all .12s;
       white-space: nowrap;
+      letter-spacing: 0.08em;
     }
     .filter-btn:hover { color: var(--green); border-color: var(--green-d); }
-    .filter-btn.active { background: var(--green-d); color: var(--green); border-color: var(--green); }
-    .filter-btn.err-btn.active { background: #4a1010; color: var(--red); border-color: var(--red); }
-    .search-wrap { flex: 1; min-width: 120px; position: relative; }
+    .filter-btn.active {
+      background: var(--green-g);
+      color: var(--green-b);
+      border-color: var(--green-d);
+      text-shadow: 0 0 6px rgba(68,255,119,0.3);
+    }
+    .filter-btn.err-btn.active {
+      background: #250800;
+      color: var(--red);
+      border-color: #551800;
+    }
+    /* Magenta highlight for the active SLOP filter — fun accent */
+    .filter-btn.slop-btn.active {
+      background: #1a0516;
+      color: var(--magenta-b);
+      border-color: var(--magenta-d);
+      text-shadow: 0 0 6px rgba(204,34,170,0.4);
+    }
+
+    .search-wrap { flex: 1; min-width: 80px; }
     .search-input {
       width: 100%;
-      background: var(--bg3);
+      background: var(--bg);
       border: 1px solid var(--border);
       color: var(--green);
       font-family: inherit;
-      font-size: 11px;
-      padding: 2px 6px;
-      border-radius: 3px;
+      font-size: 10px;
+      padding: 1px 7px;
+      border-radius: 2px;
       outline: none;
-      transition: border-color .15s;
+      transition: border-color .12s;
+      letter-spacing: 0.04em;
     }
-    .search-input::placeholder { color: var(--dim); }
+    .search-input::placeholder { color: var(--green-g); }
     .search-input:focus { border-color: var(--green-d); }
+
     .tool-btn {
-      padding: 2px 8px;
+      padding: 1px 8px;
       border: 1px solid var(--border);
       background: transparent;
-      color: var(--dim);
+      color: var(--green-d);
       font-family: inherit;
-      font-size: 11px;
+      font-size: 9.5px;
       cursor: pointer;
-      border-radius: 3px;
-      transition: all .15s;
+      border-radius: 2px;
+      transition: all .12s;
       white-space: nowrap;
+      letter-spacing: 0.06em;
     }
     .tool-btn:hover { color: var(--green); border-color: var(--green-d); }
-    .tool-btn.paused { color: var(--amber); border-color: var(--amber); }
-    .line-count { color: var(--dim); font-size: 10px; margin-left: auto; white-space: nowrap; }
+    .tool-btn.paused {
+      color: var(--magenta);
+      border-color: var(--magenta-d);
+      background: #100514;
+      text-shadow: 0 0 6px rgba(204,34,170,0.35);
+    }
 
-    /* ── Log area ─────────────────────────────────────────── */
+    .line-count {
+      color: var(--green-d);
+      font-size: 9.5px;
+      margin-left: auto;
+      white-space: nowrap;
+      letter-spacing: 0.05em;
+    }
+
+    /* ── Log area ─────────────────────────────────────────────────── */
     .log-area {
       flex: 1;
+      min-height: 0;
       overflow-y: auto;
-      padding: 6px 0;
+      overflow-x: hidden;
+      padding: 3px 0;
       background: var(--bg);
     }
-    .log-area::-webkit-scrollbar { width: 6px; }
-    .log-area::-webkit-scrollbar-track { background: var(--bg2); }
-    .log-area::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+    .log-area::-webkit-scrollbar { width: 5px; }
+    .log-area::-webkit-scrollbar-track { background: var(--panel); }
+    .log-area::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
     .log-area::-webkit-scrollbar-thumb:hover { background: var(--green-d); }
 
     .log-line {
       display: flex;
+      align-items: baseline;
       padding: 0 12px;
-      line-height: 1.6;
-      font-size: 11.5px;
-      gap: 0;
-      transition: background .08s;
+      line-height: 1.55;
+      font-size: 11px;
+      border-left: 2px solid transparent;
+      transition: background .06s;
     }
-    .log-line:hover { background: var(--bg2); }
-    .log-line.new-entry { animation: fadeIn 0.2s ease-out; }
-    @keyframes fadeIn { from { opacity: 0; transform: translateX(-4px); } to { opacity: 1; transform: none; } }
+    .log-line:hover { background: var(--bg2); border-left-color: var(--border2); }
+    .log-line.new-entry { animation: slide-in .16s ease-out; }
+    @keyframes slide-in {
+      from { opacity: 0; transform: translateX(-4px); }
+      to   { opacity: 1; transform: none; }
+    }
 
-    .ll-ts  { color: var(--dim); flex-shrink: 0; width: 90px; user-select: text; }
-    .ll-sep { color: var(--border); margin: 0 6px; flex-shrink: 0; }
+    .ll-ts  { color: var(--green-d); flex-shrink: 0; width: 86px; user-select: text; font-size: 10.5px; }
+    .ll-sep { color: var(--border2); margin: 0 8px; flex-shrink: 0; }
     .ll-msg { flex: 1; word-break: break-all; user-select: text; white-space: pre-wrap; }
 
     /* Level colours */
-    .ll-dbg  .ll-msg { color: var(--green); }
-    .ll-err  .ll-msg { color: var(--red); }
-    .ll-err  .ll-ts  { color: #6b2222; }
-    .ll-tls  .ll-msg { color: var(--cyan); }
-    .ll-slop .ll-msg { color: var(--orange); }
-    .ll-ad   .ll-msg { color: var(--amber); }
-    .ll-yt   .ll-msg { color: var(--pink); }
+    .ll-dbg    .ll-msg { color: var(--green); }
+    .ll-err    .ll-msg { color: var(--red); }
+    .ll-err    .ll-ts  { color: #4a1a0a; }
+    .ll-err             { border-left-color: #3a0e04 !important; }
+    .ll-tls    .ll-msg { color: var(--cyan); }
+    .ll-slop   .ll-msg { color: var(--magenta-b); }   /* slop → magenta, matches logo accent */
+    .ll-slop            { border-left-color: var(--magenta-d) !important; }
+    .ll-ad     .ll-msg { color: var(--yellow); }
+    .ll-yt     .ll-msg { color: var(--pink); }
     .ll-bypass .ll-msg { color: var(--purple); }
-    .ll-proxy  .ll-msg { color: #5af278; }
+    .ll-proxy  .ll-msg { color: var(--green-b); }
     .ll-cert   .ll-msg { color: var(--blue); }
-    .ll-img    .ll-msg { color: #af8af2; }
+    .ll-img    .ll-msg { color: var(--violet); }
 
-    /* ── Empty state ──────────────────────────────────────── */
+    /* ── Empty state ──────────────────────────────────────────────── */
     .empty {
       display: flex;
       flex-direction: column;
       align-items: center;
       justify-content: center;
       height: 100%;
-      color: var(--dim);
-      gap: 6px;
-      font-size: 11px;
+      color: var(--green-d);
+      gap: 8px;
+      font-size: 10px;
+      letter-spacing: 0.12em;
     }
-    .empty-cursor::after { content: '█'; animation: blink 1s step-end infinite; }
+    .empty-prompt {
+      font-size: 28px;
+      font-weight: 700;
+      line-height: 1;
+      opacity: 0.3;
+      letter-spacing: -0.03em;
+    }
+    .empty-prompt .ep-chev { color: var(--magenta); }
+    .empty-prompt .ep-cur  { color: var(--green-b); animation: blink-cursor 1.1s step-end infinite; }
 
-    /* ── Scanline overlay (subtle CRT effect) ─────────────── */
+    /* ── Scanline CRT overlay ─────────────────────────────────────── */
     body::after {
       content: '';
       position: fixed;
@@ -207,8 +381,8 @@
         to bottom,
         transparent 0px,
         transparent 1px,
-        rgba(0,0,0,0.06) 1px,
-        rgba(0,0,0,0.06) 2px
+        rgba(0, 0, 0, 0.04) 1px,
+        rgba(0, 0, 0, 0.04) 2px
       );
       pointer-events: none;
       z-index: 9999;
@@ -217,14 +391,14 @@
 </head>
 <body>
 
-  <!-- Title bar -->
+  <!-- Titlebar -->
   <div class="titlebar">
     <div class="titlebar-left">
-      <div class="titlebar-dot blink" id="liveDot"></div>
-      <span>SlopProx</span>
-      <span style="color:var(--border)">│</span>
-      <span>debug console</span>
-      <span style="color:var(--border)">│</span>
+      <div class="tb-pulse"></div>
+      <span>SLOPPROX</span>
+      <span class="tb-sep">◈</span>
+      <span>DEBUG CONSOLE</span>
+      <span class="tb-sep">◈</span>
       <span id="versionLabel">v—</span>
     </div>
     <div class="titlebar-btns">
@@ -233,63 +407,68 @@
     </div>
   </div>
 
-  <!-- Logo -->
-  <div class="logo-wrap">
-<pre class="logo"> ██████╗ ██╗      ██████╗ ██████╗ ██████╗ ██████╗  ██████╗ ██╗  ██╗
-██╔════╝ ██║     ██╔═══██╗██╔══██╗██╔══██╗██╔══██╗██╔═══██╗╚██╗██╔╝
-╚█████╗  ██║     ██║   ██║██████╔╝██████╔╝██████╔╝██║   ██║ ╚███╔╝
- ╚═══██╗ ██║     ██║   ██║██╔═══╝ ██╔═══╝ ██╔══██╗██║   ██║ ██╔██╗
- ██████╔╝███████╗╚██████╔╝██║     ██║     ██║  ██║╚██████╔╝██╔╝ ██╗
- ╚═════╝ ╚══════╝ ╚═════╝ ╚═╝     ╚═╝     ╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═╝</pre>
-    <div class="logo-sub">
-      <span>AI Slop Filter</span>
-      <span class="sep">│</span>
-      <span>live debug stream</span>
-      <span class="sep">│</span>
-      uptime: <span id="uptimeLabel">0s</span>
-      <span class="sep">│</span>
-      session lines: <span id="sessionCount">0</span>
+  <!-- Header / identity panel -->
+  <div class="header-panel">
+    <div class="header-identity">
+      <div class="header-sigil">
+        <span class="sigil-chevron">&gt;</span><span class="sigil-cursor">_</span>
+      </div>
+      <div class="header-text">
+        <div class="header-title">
+          <span class="accent">S</span>LOPPROX
+        </div>
+        <div class="header-tagline">Content Intelligence System &nbsp;◈&nbsp; Signal Analysis Node</div>
+      </div>
+    </div>
+    <div class="header-rule"></div>
+    <div class="header-meta">
+      <div class="hm-item">STATUS <span class="hm-val hm-active">ACTIVE</span></div>
+      <div class="hm-item">AI FILTER <span class="hm-val">ONLINE</span></div>
+      <div class="hm-item">UPTIME <span class="hm-val" id="uptimeLabel">0s</span></div>
+      <div class="hm-item">SESSION <span class="hm-val" id="sessionCount">0</span> LINES</div>
     </div>
   </div>
 
   <!-- Toolbar -->
   <div class="toolbar">
     <button class="filter-btn active" data-filter="all">ALL</button>
-    <button class="filter-btn err-btn" data-filter="err">ERRORS</button>
-    <button class="filter-btn" data-filter="slop">SLOP</button>
+    <button class="filter-btn err-btn" data-filter="err">ERR</button>
+    <button class="filter-btn slop-btn" data-filter="slop">SLOP</button>
     <button class="filter-btn" data-filter="ad">ADS</button>
-    <button class="filter-btn" data-filter="yt">YOUTUBE</button>
+    <button class="filter-btn" data-filter="yt">YT</button>
     <button class="filter-btn" data-filter="tls">TLS</button>
     <button class="filter-btn" data-filter="proxy">PROXY</button>
     <div class="search-wrap">
-      <input class="search-input" id="searchInput" type="text" placeholder="search logs…" spellcheck="false">
+      <input class="search-input" id="searchInput" type="text" placeholder="/ search…" spellcheck="false">
     </div>
-    <button class="tool-btn" id="pauseBtn">⏸ pause</button>
-    <button class="tool-btn" id="clearBtn">🗑 clear</button>
+    <button class="tool-btn" id="pauseBtn">⏸ PAUSE</button>
+    <button class="tool-btn" id="clearBtn">✕ CLEAR</button>
     <span class="line-count" id="lineCount">0 lines</span>
   </div>
 
   <!-- Log output -->
   <div class="log-area" id="logArea">
     <div class="empty" id="emptyState">
-      <div class="empty-cursor">&nbsp;</div>
-      <div>waiting for events…</div>
+      <div class="empty-prompt">
+        <span class="ep-chev">&gt;</span><span class="ep-cur">_</span>
+      </div>
+      <div>AWAITING SIGNAL INPUT</div>
     </div>
   </div>
 
 <script>
-  const logArea      = document.getElementById('logArea');
-  const emptyState   = document.getElementById('emptyState');
-  const lineCountEl  = document.getElementById('lineCount');
+  const logArea        = document.getElementById('logArea');
+  const emptyState     = document.getElementById('emptyState');
+  const lineCountEl    = document.getElementById('lineCount');
   const sessionCountEl = document.getElementById('sessionCount');
-  const pauseBtn     = document.getElementById('pauseBtn');
-  const clearBtn     = document.getElementById('clearBtn');
-  const searchInput  = document.getElementById('searchInput');
-  const uptimeLabel  = document.getElementById('uptimeLabel');
-  const versionLabel = document.getElementById('versionLabel');
+  const pauseBtn       = document.getElementById('pauseBtn');
+  const clearBtn       = document.getElementById('clearBtn');
+  const searchInput    = document.getElementById('searchInput');
+  const uptimeLabel    = document.getElementById('uptimeLabel');
+  const versionLabel   = document.getElementById('versionLabel');
 
-  // ── State ─────────────────────────────────────────────────
-  let allEntries   = [];   // every entry ever received
+  // ── State ─────────────────────────────────────────────────────────
+  let allEntries   = [];
   let paused       = false;
   let activeFilter = 'all';
   let searchTerm   = '';
@@ -297,43 +476,43 @@
   const startTime  = Date.now();
   let sessionLines = 0;
 
-  // ── Window controls ───────────────────────────────────────
+  // ── Window controls ───────────────────────────────────────────────
   document.getElementById('btnMin').addEventListener('click',   () => window.logApi.send('log-window-minimize'));
   document.getElementById('btnClose').addEventListener('click', () => window.logApi.send('log-window-close'));
 
-  // ── Version label ─────────────────────────────────────────
+  // ── Version label ─────────────────────────────────────────────────
   window.logApi.onVersion(v => { versionLabel.textContent = `v${v}`; });
 
-  // ── Uptime counter ────────────────────────────────────────
+  // ── Uptime counter ────────────────────────────────────────────────
   setInterval(() => {
     const s = Math.floor((Date.now() - startTime) / 1000);
     const h = Math.floor(s / 3600);
     const m = Math.floor((s % 3600) / 60);
     const sec = s % 60;
-    if (h > 0) uptimeLabel.textContent = `${h}h ${m}m ${sec}s`;
+    if (h > 0)      uptimeLabel.textContent = `${h}h ${m}m ${sec}s`;
     else if (m > 0) uptimeLabel.textContent = `${m}m ${sec}s`;
-    else uptimeLabel.textContent = `${sec}s`;
+    else            uptimeLabel.textContent = `${sec}s`;
   }, 1000);
 
-  // ── Log classification ────────────────────────────────────
+  // ── Log classification ────────────────────────────────────────────
   function classify(entry) {
     if (entry.level === 'error') return 'err';
     const m = entry.msg;
-    if (/\[TLS|tls-client-error|TLS noise|ClientHello|SSLV3|certificate/i.test(m)) return 'tls';
-    if (/SLOP|isSlop|\bText \[|filteredCount|filter-count/i.test(m)) return 'slop';
-    if (/Ad blocked|adsBlocked|ads-count/i.test(m)) return 'ad';
-    if (/YouTube|youtubeBlocked|youtube-count|youtube/i.test(m)) return 'yt';
-    if (/bypass|Bypass|suggest-bypass/i.test(m)) return 'bypass';
-    if (/Proxy started|proxy|PAC|port 8081/i.test(m)) return 'proxy';
-    if (/[Cc]ert|CA cert|Installing|cert-ready/i.test(m)) return 'cert';
-    if (/[Ii]mage|imagesBlocked|images-count/i.test(m)) return 'img';
+    if (/\[TLS|tls-client-error|TLS noise|ClientHello|SSLV3|certificate/i.test(m))  return 'tls';
+    if (/SLOP|isSlop|\bText \[|filteredCount|filter-count/i.test(m))                return 'slop';
+    if (/Ad blocked|adsBlocked|ads-count/i.test(m))                                 return 'ad';
+    if (/YouTube|youtubeBlocked|youtube-count|youtube/i.test(m))                    return 'yt';
+    if (/bypass|Bypass|suggest-bypass/i.test(m))                                    return 'bypass';
+    if (/Proxy started|proxy|PAC|port 8081/i.test(m))                              return 'proxy';
+    if (/[Cc]ert|CA cert|Installing|cert-ready/i.test(m))                          return 'cert';
+    if (/[Ii]mage|imagesBlocked|images-count/i.test(m))                            return 'img';
     return 'dbg';
   }
 
-  // ── Format timestamp → HH:MM:SS.mmm ──────────────────────
+  // ── Format timestamp → HH:MM:SS.mmm ──────────────────────────────
   function fmtTs(iso) {
     try {
-      const d = new Date(iso);
+      const d  = new Date(iso);
       const hh = String(d.getHours()).padStart(2, '0');
       const mm = String(d.getMinutes()).padStart(2, '0');
       const ss = String(d.getSeconds()).padStart(2, '0');
@@ -342,84 +521,114 @@
     } catch (_) { return '??:??:??.???'; }
   }
 
-  // ── Clean up message (strip redundant [DEBUG] prefix) ─────
+  // ── Clean message ─────────────────────────────────────────────────
   function cleanMsg(msg) {
     return msg.replace(/^\[DEBUG\]\s*/, '');
   }
 
-  // ── Build a DOM line element ──────────────────────────────
+  // ── Build a DOM line ──────────────────────────────────────────────
   function makeLine(entry, animate) {
-    const cls   = classify(entry);
-    const row   = document.createElement('div');
-    row.className = `log-line ll-${cls}${animate ? ' new-entry' : ''}`;
+    const cls = classify(entry);
+    const row = document.createElement('div');
+    row.className   = `log-line ll-${cls}${animate ? ' new-entry' : ''}`;
     row.dataset.cls = cls;
     row.dataset.msg = entry.msg.toLowerCase();
 
     const ts  = document.createElement('span');
-    ts.className = 'll-ts';
+    ts.className   = 'll-ts';
     ts.textContent = fmtTs(entry.ts);
 
     const sep = document.createElement('span');
-    sep.className = 'll-sep';
+    sep.className   = 'll-sep';
     sep.textContent = '│';
 
     const msg = document.createElement('span');
-    msg.className = 'll-msg';
+    msg.className   = 'll-msg';
     msg.textContent = cleanMsg(entry.msg);
 
     row.append(ts, sep, msg);
     return row;
   }
 
-  // ── Visibility check ──────────────────────────────────────
+  // ── Visibility ────────────────────────────────────────────────────
   function isVisible(entry, cls) {
     if (activeFilter !== 'all' && cls !== activeFilter) return false;
     if (searchTerm && !entry.msg.toLowerCase().includes(searchTerm)) return false;
     return true;
   }
 
-  // ── Scroll guard — if user scrolled up, stop auto-scroll ──
+  // ── Auto-scroll guard ─────────────────────────────────────────────
   logArea.addEventListener('scroll', () => {
-    const atBottom = logArea.scrollHeight - logArea.scrollTop - logArea.clientHeight < 40;
-    autoScroll = atBottom;
+    autoScroll = logArea.scrollHeight - logArea.scrollTop - logArea.clientHeight < 40;
   });
 
   function scrollToBottom() {
     if (autoScroll) logArea.scrollTop = logArea.scrollHeight;
   }
 
-  // ── Append a single entry to the DOM ─────────────────────
+  // ── Append single entry ───────────────────────────────────────────
   function appendEntry(entry, animate) {
     const cls = classify(entry);
     if (!isVisible(entry, cls)) return;
     emptyState.style.display = 'none';
-    const el = makeLine(entry, animate);
-    logArea.appendChild(el);
+    logArea.appendChild(makeLine(entry, animate));
     updateLineCount();
     scrollToBottom();
   }
 
-  // ── Full re-render (on filter/search change) ──────────────
-  function rerender() {
+  // ── Full re-render ────────────────────────────────────────────────
+  // On filter/search change: show/hide existing lines (no DOM rebuild).
+  // Only falls back to a full rebuild when allEntries changed (history load).
+  let _renderedCount = 0;
+  function rerender(forceRebuild = false) {
+    const lines = logArea.querySelectorAll('.log-line');
+    if (!forceRebuild && lines.length === _renderedCount && _renderedCount > 0) {
+      let shown = 0;
+      lines.forEach((line, i) => {
+        const entry = allEntries[i];
+        if (!entry) { line.style.display = 'none'; return; }
+        const visible = isVisible(entry, classify(entry));
+        line.style.display = visible ? '' : 'none';
+        if (visible) shown++;
+      });
+      _updateEmptyState(shown);
+      updateLineCount();
+      autoScroll = true;
+      scrollToBottom();
+      return;
+    }
     logArea.innerHTML = '';
     let shown = 0;
     for (const entry of allEntries) {
       const cls = classify(entry);
-      if (!isVisible(entry, cls)) continue;
-      logArea.appendChild(makeLine(entry, false));
-      shown++;
+      const line = makeLine(entry, false);
+      if (!isVisible(entry, cls)) line.style.display = 'none';
+      else shown++;
+      logArea.appendChild(line);
     }
-    if (shown === 0) {
-      const empty = document.createElement('div');
-      empty.className = 'empty';
-      empty.textContent = activeFilter === 'all'
-        ? (searchTerm ? 'no matches' : 'no logs yet')
-        : `no ${activeFilter.toUpperCase()} events`;
-      logArea.appendChild(empty);
-    }
+    _renderedCount = allEntries.length;
+    _updateEmptyState(shown);
     updateLineCount();
     autoScroll = true;
     scrollToBottom();
+  }
+
+  function _updateEmptyState(shown) {
+    const existing = logArea.querySelector('.empty');
+    if (shown === 0) {
+      if (!existing) {
+        const el = document.createElement('div');
+        el.className = 'empty';
+        el.innerHTML = `<div class="empty-prompt"><span class="ep-chev">&gt;</span><span class="ep-cur">_</span></div><div>${
+          searchTerm       ? 'NO MATCHES' :
+          activeFilter === 'all' ? 'AWAITING SIGNAL INPUT' :
+          `NO ${activeFilter.toUpperCase()} EVENTS`
+        }</div>`;
+        logArea.appendChild(el);
+      }
+    } else {
+      existing?.remove();
+    }
   }
 
   function updateLineCount() {
@@ -427,13 +636,9 @@
     lineCountEl.textContent = `${visible.toLocaleString()} / ${allEntries.length.toLocaleString()} lines`;
   }
 
-  // ── Receive history (ring buffer from main) ───────────────
-  window.logApi.onHistory(lines => {
-    allEntries = lines;
-    rerender();
-  });
+  // ── IPC ───────────────────────────────────────────────────────────
+  window.logApi.onHistory(lines => { allEntries = lines; _renderedCount = 0; rerender(true); });
 
-  // ── Receive live lines ────────────────────────────────────
   window.logApi.onLine(entry => {
     allEntries.push(entry);
     sessionLines++;
@@ -441,7 +646,7 @@
     if (!paused) appendEntry(entry, true);
   });
 
-  // ── Filter buttons ────────────────────────────────────────
+  // ── Filter buttons ────────────────────────────────────────────────
   document.querySelectorAll('.filter-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
@@ -451,46 +656,42 @@
     });
   });
 
-  // ── Search ────────────────────────────────────────────────
+  // ── Search ────────────────────────────────────────────────────────
   searchInput.addEventListener('input', () => {
     searchTerm = searchInput.value.toLowerCase();
     rerender();
   });
 
-  // ── Pause / Resume ────────────────────────────────────────
+  // ── Pause / Resume ────────────────────────────────────────────────
   pauseBtn.addEventListener('click', () => {
     paused = !paused;
-    pauseBtn.textContent = paused ? '▶ resume' : '⏸ pause';
+    pauseBtn.textContent = paused ? '▶ RESUME' : '⏸ PAUSE';
     pauseBtn.classList.toggle('paused', paused);
-    if (!paused) {
-      // flush any entries that arrived while paused
-      rerender();
-    }
+    if (!paused) rerender();
   });
 
-  // ── Clear ─────────────────────────────────────────────────
+  // ── Clear ─────────────────────────────────────────────────────────
   clearBtn.addEventListener('click', () => {
     allEntries = [];
+    _renderedCount = 0;
     logArea.innerHTML = '';
     logArea.appendChild(emptyState);
     emptyState.style.display = '';
     updateLineCount();
   });
 
-  // ── Keyboard shortcuts ─────────────────────────────────────
+  // ── Keyboard shortcuts ────────────────────────────────────────────
   document.addEventListener('keydown', e => {
     if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
       e.preventDefault();
       searchInput.focus();
       searchInput.select();
     }
-    if (e.key === 'Escape') {
-      if (document.activeElement === searchInput) {
-        searchInput.value = '';
-        searchTerm = '';
-        rerender();
-        searchInput.blur();
-      }
+    if (e.key === 'Escape' && document.activeElement === searchInput) {
+      searchInput.value = '';
+      searchTerm = '';
+      rerender();
+      searchInput.blur();
     }
     if ((e.ctrlKey || e.metaKey) && e.key === 'l') {
       e.preventDefault();

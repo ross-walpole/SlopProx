@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Ross Walpole <ross.walpole@gmail.com>
+// SPDX-License-Identifier: GPL-3.0-only
+
 // counts.js — Persistent lifetime counter storage.
 
 // Node's require cache ensures a single instance is shared across main/proxy/service.

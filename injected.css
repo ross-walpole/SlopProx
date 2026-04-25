@@ -1,38 +1,75 @@
 /* ─────────────────────────────────────────────────────────────────
-   AI Slop Filter — injected by proxy
-   Mirrors extension/content.css exactly so both pipelines share the
-   same visual design regardless of whether the extension is installed.
+   AI Slop Filter — injected by proxy (mirrors extension/content.css)
+   Palette: dark warm-black bg, sage green text, soft magenta accent.
+   No !important needed here as these are injected into <head> and
+   take natural cascade precedence over most site styles.
 ───────────────────────────────────────────────────────────────── */
 
-/* Hidden content — display:none is used instead of blur so the
-   element is fully removed from layout (no height flash, no blur
-   artifacts). The !important ensures this wins over any site CSS. */
+/* Hidden content */
 .sf-content {
   display: none !important;
 }
 
-/* ── Shared design tokens ────────────────────────────────────────── */
+/* Shared font stack */
+.sf-card-placeholder, .sf-text-placeholder, .sf-detect-label,
+.sf-detect-conf, .sf-detect-method, .sf-detect-icon,
+.sf-reveal-btn, .sf-yt-overlay, .sf-yt-feed-badge {
+  font-family: 'JetBrains Mono', 'Cascadia Code', Consolas, 'Courier New', monospace;
+  box-sizing: border-box;
+  line-height: normal;
+}
 
-.sf-reveal-btn {
-  padding: 5px 16px;
-  background: rgba(239, 68, 68, 0.12);
-  color: #fca5a5;
-  border: 1px solid rgba(239, 68, 68, 0.38);
-  border-radius: 6px;
-  cursor: pointer;
+/* ── Blink animation for >_ cursor ──────────────────────────────── */
+@keyframes sf-blink { 0%,100%{opacity:1} 50%{opacity:0} }
+
+.sf-detect-icon {
   font-size: 13px;
-  font-weight: 600;
+  line-height: 1;
+  flex-shrink: 0;
+  color: #b84fa0;
+  display: inline-flex;
+  align-items: center;
+  letter-spacing: -0.02em;
+}
+
+.sf-detect-icon .sf-icon-chev {
+  color: #b84fa0;
+  text-shadow: 0 0 8px rgba(184,79,160,0.5);
+}
+
+.sf-detect-icon .sf-icon-cur {
+  color: #9dd4b0;
+  animation: sf-blink 1.1s step-end infinite;
+}
+
+/* ── Reveal button ───────────────────────────────────────────────── */
+.sf-reveal-btn {
+  display: inline-block;
+  padding: 5px 16px;
+  background: rgba(184, 79, 160, 0.12);
+  color: #d070be;
+  border: 1px solid rgba(184, 79, 160, 0.55);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 700;
   line-height: 1.65;
   flex-shrink: 0;
   white-space: nowrap;
-  font-family: system-ui, -apple-system, sans-serif;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  text-decoration: none;
+  text-shadow: none;
   transition: background 0.14s, border-color 0.14s;
+  outline: none;
 }
 .sf-reveal-btn:hover {
-  background: rgba(239, 68, 68, 0.22);
-  border-color: rgba(239, 68, 68, 0.62);
+  background: rgba(184, 79, 160, 0.28);
+  border-color: rgba(184, 79, 160, 0.85);
+  color: #e090d0;
 }
 
+/* ── Detection row ───────────────────────────────────────────────── */
 .sf-detect-row {
   display: flex;
   align-items: center;
@@ -40,56 +77,82 @@
   flex-wrap: wrap;
 }
 
-.sf-detect-icon {
-  font-size: 16px;
-  line-height: 1;
-  flex-shrink: 0;
-}
-
 .sf-detect-label {
-  color: #fca5a5;
-  font-family: system-ui, -apple-system, sans-serif;
-  font-size: 14px;
+  color: #9dd4b0;
+  font-size: 11px;
   font-weight: 700;
-  letter-spacing: 0.01em;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
   white-space: nowrap;
+  text-shadow: none;
+  text-decoration: none;
 }
 
 .sf-detect-method {
-  color: rgba(255, 255, 255, 0.45);
-  background: rgba(255, 255, 255, 0.07);
+  color: #4a8a62;
+  background: rgba(74, 138, 98, 0.14);
+  border: 1px solid rgba(74, 138, 98, 0.3);
   border-radius: 3px;
   padding: 1px 6px;
-  font-family: system-ui, -apple-system, sans-serif;
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 700;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
   white-space: nowrap;
   flex-shrink: 0;
+  text-shadow: none;
 }
 
 .sf-detect-conf {
-  color: #fff;
-  background: rgba(239, 68, 68, 0.48);
+  color: #d070be;
+  background: rgba(184, 79, 160, 0.2);
+  border: 1px solid rgba(184, 79, 160, 0.45);
   border-radius: 3px;
   padding: 1px 6px;
-  font-family: system-ui, -apple-system, sans-serif;
   font-size: 11px;
   font-weight: 800;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.04em;
   white-space: nowrap;
   flex-shrink: 0;
+  text-shadow: none;
 }
 
-/* ── Text placeholder (inline paragraph context) ───────────────── */
+/* ── Card placeholder ────────────────────────────────────────────── */
+.sf-card-placeholder {
+  background: #0d1610;
+  border-left: 3px solid #b84fa0;
+  border-top: 1px solid rgba(184, 79, 160, 0.28);
+  border-right: 1px solid rgba(184, 79, 160, 0.28);
+  border-bottom: 1px solid rgba(184, 79, 160, 0.28);
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  margin: 2px 0;
+  cursor: default;
+}
 
+.sf-card-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 20px 24px;
+  text-align: center;
+}
+
+/* ── Text placeholder ────────────────────────────────────────────── */
 .sf-text-placeholder {
   box-sizing: border-box;
-  background: rgba(12, 12, 12, 0.9);
-  border: 1px solid rgba(239, 68, 68, 0.32);
-  border-radius: 6px;
+  background: #0d1610;
+  border-left: 3px solid #b84fa0;
+  border-top: 1px solid rgba(184, 79, 160, 0.22);
+  border-right: 1px solid rgba(184, 79, 160, 0.22);
+  border-bottom: 1px solid rgba(184, 79, 160, 0.22);
+  border-radius: 4px;
   display: block;
+  width: 100%;
   margin: 4px 0;
 }
 
@@ -102,83 +165,97 @@
   flex-wrap: wrap;
 }
 
-/* ── YouTube AI-label overlay (covers the player) ──────────────── */
-
+/* ── YouTube AI-label overlay ────────────────────────────────────── */
 .sf-yt-overlay {
   position: absolute;
   inset: 0;
-  background: rgba(8, 8, 8, 0.93);
+  background: rgba(8, 13, 9, 0.94);
+  border-top: 3px solid #b84fa0;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: 10px;
   z-index: 2147483647;
-  font-family: system-ui, -apple-system, sans-serif;
   text-align: center;
   padding: 24px;
-  box-sizing: border-box;
   cursor: default;
   pointer-events: none;
 }
 
-.sf-yt-ov-icon { font-size: 40px; line-height: 1; }
+.sf-yt-ov-icon {
+  font-size: 28px;
+  line-height: 1;
+  color: #b84fa0;
+  display: inline-flex;
+  align-items: center;
+  letter-spacing: -0.04em;
+}
+
+.sf-yt-ov-icon .sf-icon-chev { color: #b84fa0; text-shadow: 0 0 12px rgba(184,79,160,0.6); }
+.sf-yt-ov-icon .sf-icon-cur  { color: #9dd4b0; animation: sf-blink 1.1s step-end infinite; }
 
 .sf-yt-ov-title {
-  color: #fca5a5;
-  font-size: 17px;
+  color: #9dd4b0;
+  font-size: 13px;
   font-weight: 700;
-  letter-spacing: 0.01em;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  text-shadow: none;
 }
 
 .sf-yt-ov-sub {
-  color: rgba(255, 255, 255, 0.6);
-  font-size: 13px;
-  line-height: 1.55;
-  max-width: 320px;
+  color: #4a8a62;
+  font-size: 11px;
+  line-height: 1.6;
+  max-width: 300px;
+  letter-spacing: 0.02em;
+  text-shadow: none;
 }
 
 .sf-yt-ov-buttons {
   display: flex;
-  gap: 10px;
+  gap: 8px;
   flex-wrap: wrap;
   justify-content: center;
   pointer-events: auto;
-  margin-top: 4px;
+  margin-top: 6px;
 }
 
 .sf-yt-play-btn, .sf-yt-next-btn {
-  padding: 8px 22px;
-  background: rgba(239, 68, 68, 0.14);
-  color: #fca5a5;
-  border: 1px solid rgba(239, 68, 68, 0.42);
-  border-radius: 8px;
+  padding: 7px 20px;
+  background: rgba(184, 79, 160, 0.12);
+  color: #d070be;
+  border: 1px solid rgba(184, 79, 160, 0.5);
+  border-radius: 4px;
   cursor: pointer;
-  font-size: 14px;
-  font-weight: 600;
-  font-family: inherit;
-  transition: background 0.14s, border-color 0.14s;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  text-shadow: none;
 }
 .sf-yt-play-btn:hover, .sf-yt-next-btn:hover {
-  background: rgba(239, 68, 68, 0.26);
-  border-color: rgba(239, 68, 68, 0.65);
+  background: rgba(184, 79, 160, 0.28);
+  border-color: rgba(184, 79, 160, 0.85);
 }
 
-/* ── YouTube feed card badge ───────────────────────────────────── */
-
+/* ── YouTube feed card badge ─────────────────────────────────────── */
 .sf-yt-feed-badge {
   position: absolute;
   top: 6px;
   left: 6px;
-  background: rgba(0, 0, 0, 0.82);
-  color: #fca5a5;
-  font-family: system-ui, -apple-system, sans-serif;
-  font-size: 11px;
+  background: rgba(13, 22, 16, 0.92);
+  color: #d070be;
+  font-size: 10px;
   font-weight: 700;
   padding: 2px 8px;
-  border-radius: 4px;
-  border: 1px solid rgba(239, 68, 68, 0.45);
+  border-radius: 3px;
+  border: 1px solid rgba(184, 79, 160, 0.5);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
   pointer-events: none;
   z-index: 10;
   white-space: nowrap;
+  text-shadow: none;
 }

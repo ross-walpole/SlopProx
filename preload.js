@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Ross Walpole <ross.walpole@gmail.com>
+// SPDX-License-Identifier: GPL-3.0-only
+
 const { contextBridge, ipcRenderer } = require('electron');
 
 const SEND_CHANNELS = [
@@ -31,6 +34,7 @@ const RECEIVE_CHANNELS = [
   'update-check-start', 'update-check-complete', 'update-check-error',
   'suggest-bypass',
   'bypass-domains',
+  'classification-entry',
 ];
 
 contextBridge.exposeInMainWorld('electronAPI', {

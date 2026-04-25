@@ -1,7 +1,11 @@
+// SPDX-FileCopyrightText: 2026 Ross Walpole <ross.walpole@gmail.com>
+// SPDX-License-Identifier: GPL-3.0-only
+
 const mockttp = require('mockttp');
 const fs      = require('fs');
 const path    = require('path');
-const { isAiSlop }        = require('./classifier');
+const { execSync }           = require('child_process');
+const { isAiSlop }           = require('./classifier');
 const { debugLog, logError } = require('./logger');
 const state  = require('./state');
 const counts = require('./counts');
@@ -34,6 +38,70 @@ let injectedScript = '';
 let injectedStyles = '';
 
 const recentSuggestions = new Map(); // hostname → timestamp (deduplication)
+
+// ── Upstream proxy detection ───────────────────────────────────────────────────
+// Reads the OS-configured proxy at startup. Returns a proxyUrl string (http://...,
+// socks5://...) or a pac+http://... string for PAC-based configs.
+// mockttp's proxy-agent handles all these formats natively.
+function detectUpstreamProxy() {
+  // 1. Environment variables — highest priority, cross-platform
+  for (const k of ['HTTPS_PROXY','https_proxy','HTTP_PROXY','http_proxy','ALL_PROXY','all_proxy']) {
+    if (process.env[k]) return process.env[k];
+  }
+
+  // 2. Windows registry
+  if (process.platform === 'win32') {
+    try {
+      const out = execSync(
+        'reg query "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings"',
+        { encoding: 'utf8', windowsHide: true }
+      );
+      const proxyEnabled = /ProxyEnable\s+REG_DWORD\s+0x1/m.test(out);
+      if (proxyEnabled) {
+        const m = out.match(/ProxyServer\s+REG_SZ\s+(.+)/m);
+        if (m) {
+          let server = m[1].trim();
+          // Handle "http=proxy:8080;https=proxy:8080" protocol-specific format
+          if (server.includes('=')) {
+            server = server.match(/https=([^;]+)/)?.[1]
+                  || server.match(/http=([^;]+)/)?.[1]
+                  || server.split(';')[0];
+          }
+          if (!server.startsWith('http')) server = `http://${server}`;
+          return server;
+        }
+      }
+      // PAC file (AutoConfigURL) — lower priority than explicit proxy
+      const pacM = out.match(/AutoConfigURL\s+REG_SZ\s+(.+)/m);
+      if (pacM) {
+        const url = pacM[1].trim();
+        return url.startsWith('pac+') ? url : `pac+${url}`;
+      }
+    } catch (_) {}
+  }
+
+  // 3. macOS
+  if (process.platform === 'darwin') {
+    try {
+      const out = execSync('scutil --proxy', { encoding: 'utf8' });
+      const httpsOn = /HTTPSEnable\s*:\s*1/.test(out);
+      const httpOn  = /HTTPEnable\s*:\s*1/.test(out);
+      if (httpsOn || httpOn) {
+        const host = (httpsOn
+          ? out.match(/HTTPSProxy\s*:\s*(.+)/)?.[1]
+          : out.match(/HTTPProxy\s*:\s*(.+)/)?.[1])?.trim();
+        const port = (httpsOn
+          ? out.match(/HTTPSPort\s*:\s*(\d+)/)?.[1]
+          : out.match(/HTTPPort\s*:\s*(\d+)/)?.[1]) || '8080';
+        if (host) return `http://${host}:${port}`;
+      }
+      const pacUrl = out.match(/ProxyAutoConfigURLString\s*:\s*(.+)/)?.[1]?.trim();
+      if (pacUrl) return pacUrl.startsWith('pac+') ? pacUrl : `pac+${pacUrl}`;
+    } catch (_) {}
+  }
+
+  return null;
+}
 
 function isRealBrowserRequest(req) {
   if (!req?.headers) return false;
@@ -112,7 +180,7 @@ async function start(certsDir) {
     // the SNI from the ClientHello and creates a raw TCP tunnel instead of
     // doing MITM. The client negotiates TLS directly with the real server —
     // the SlopProx CA cert is never presented. This is the only correct way
-    // to bypass cert rejection in Electron apps, IDEs, games, OutSystems, etc.
+    // to bypass cert rejection in Apps, IDEs, Games etc.
     const tlsPassthrough = (state.BYPASS_DOMAINS || [])
       .filter(d => !d.includes('*') && !/^\d/.test(d))
       .map(hostname => ({ hostname }));
@@ -122,7 +190,17 @@ async function start(certsDir) {
       http2: false,
     });
 
+    const OWN_PAC = `http://127.0.0.1:${PORT}/filter.pac`;
+    const rawUpstream = detectUpstreamProxy();
+    const safeUpstream = (rawUpstream && !rawUpstream.replace(/^pac\+/, '').startsWith(`http://127.0.0.1:${PORT}`))
+      ? rawUpstream : null;
+    if (safeUpstream) debugLog(`Upstream proxy detected: ${safeUpstream}`);
+
     await proxyServer.forAnyRequest().thenPassThrough({
+      proxyConfig: safeUpstream ? {
+        proxyUrl: safeUpstream,
+        noProxy: ['localhost', '127.0.0.1', ...state.BYPASS_DOMAINS],
+      } : undefined,
       beforeRequest: async (req) => {
         const urlStr = req.url || '';
         if (urlStr.endsWith('/filter.pac')) {
@@ -142,6 +220,8 @@ async function start(certsDir) {
             const isSlop = confidence > 0.45;
             debugLog(`Text/proxy [${isSlop ? 'SLOP' : 'real'} ${Math.round(confidence * 100)}% ${method}]: "${text.slice(0, 80)}"`);
             if (isSlop) { state.filteredCount++; safeSend('filter-count', state.filteredCount); counts.schedule(state); }
+            let _host = urlStr; try { _host = new URL(urlStr).hostname; } catch (_) {}
+            if (isSlop || Math.random() < 0.15) safeSend('classification-entry', { ts: Date.now(), type: 'text', outcome: isSlop ? 'blocked' : 'passed', target: _host, confidence: Math.round(confidence * 100) });
             return { response: { statusCode: 200, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ isSlop, confidence: Math.round(confidence * 100), method }) } };
           } catch (_) {
             return { response: { statusCode: 200, headers: { 'content-type': 'application/json' }, body: '{"isSlop":false,"confidence":0}' } };
@@ -154,6 +234,7 @@ async function start(certsDir) {
           state.youtubeBlocked++;
           safeSend('youtube-count', state.youtubeBlocked);
           counts.schedule(state);
+          safeSend('classification-entry', { ts: Date.now(), type: 'youtube', outcome: 'blocked', target: 'youtube.com', confidence: null });
           debugLog(`YouTube AI-disclosed video blocked (#${state.youtubeBlocked})`);
           return { response: { statusCode: 204, headers: {} } };
         }
@@ -175,6 +256,7 @@ async function start(certsDir) {
           state.adsBlocked++;
           safeSend('ads-count', state.adsBlocked);
           counts.schedule(state);
+          safeSend('classification-entry', { ts: Date.now(), type: 'ad', outcome: 'blocked', target: host, confidence: null });
           debugLog(`Ad blocked: ${host}`);
           return { statusCode: 204, headers: {} };
         }
@@ -227,9 +309,14 @@ async function start(certsDir) {
       // Two failure modes for cert rejection:
       // 1. TLS alert (OpenSSL error string present) — explicit rejection
       // 2. "closed" after handshakeTimestamp — client saw our CA cert and silently closed
-      //    (common with OutSystems, Electron apps, IDEs, games)
+      //    (common with Apps, IDEs, Games etc.)
       const handshakeFailed = failure?.timingEvents?.handshakeTimestamp !== undefined;
-      const isCertError = handshakeFailed || /certificate|CERT|SSLV3_ALERT|alert certificate unknown|UNABLE_TO_GET_ISSUER/i.test(errStr);
+      // Some apps don't send a TLS alert — they open the CONNECT tunnel then TCP-reset
+      // before the handshake completes (no handshakeTimestamp). Treat this as a cert rejection.
+      const silentReset = failure?.timingEvents?.tunnelTimestamp !== undefined
+        && failure?.timingEvents?.handshakeTimestamp === undefined
+        && failure?.failureCause === 'reset';
+      const isCertError = handshakeFailed || silentReset || /certificate|CERT|SSLV3_ALERT|alert certificate unknown|UNABLE_TO_GET_ISSUER/i.test(errStr);
       if (isCertError) {
         const now = Date.now();
         const last = recentSuggestions.get(hostname) || 0;
@@ -239,7 +326,7 @@ async function start(certsDir) {
           showWindow();
           safeSend('suggest-bypass', {
             hostname: hostname,
-            reason: 'Certificate validation failed (common with OutSystems, Discord, IDEs, games, etc.)'
+            reason: 'Certificate validation failed (common with Apps, IDEs, Games etc.)'
           });
         } else {
           debugLog(`[TLS] Suppressed duplicate toast for ${hostname}`);
