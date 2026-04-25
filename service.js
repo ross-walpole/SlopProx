@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Ross Walpole <ross.walpole@gmail.com>
+// SPDX-License-Identifier: GPL-3.0-only
+
 // service.js
 
 // Single HTTP service: POST /classify, POST /classify-image, GET /status
@@ -83,6 +86,7 @@ function start(safeSend) {
         imageDetectionEnabled: state.IMAGE_DETECTION_ENABLED,
         youtubeFilterEnabled: state.YOUTUBE_FILTER_ENABLED,
         token: SERVICE_TOKEN,
+        adsBlocked: state.adsBlocked || 0,
       }));
       return;
     }
@@ -104,6 +108,7 @@ function start(safeSend) {
       state.youtubeBlocked++;
       safeSend('youtube-count', state.youtubeBlocked);
       counts.schedule(state);
+      safeSend('classification-entry', { ts: Date.now(), type: 'youtube', outcome: 'blocked', target: 'youtube.com', confidence: null });
       debugLog(`YouTube AI-disclosed video blocked (#${state.youtubeBlocked})`);
       res.writeHead(204); res.end();
       return;
@@ -136,6 +141,7 @@ function start(safeSend) {
             safeSend('filter-count', state.filteredCount);
             counts.schedule(state);
           }
+          if (isSlop || Math.random() < 0.15) safeSend('classification-entry', { ts: Date.now(), type: 'text', outcome: isSlop ? 'blocked' : 'passed', target: 'social feed', confidence: Math.round(confidence * 100) });
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ isSlop, confidence: Math.round(confidence * 100), method }));
         } catch (err) {
@@ -178,6 +184,8 @@ function start(safeSend) {
             safeSend('images-count', state.imagesBlocked);
             counts.schedule(state);
           }
+          let _imgHost = imageUrl; try { _imgHost = new URL(imageUrl).hostname; } catch (_) {}
+          safeSend('classification-entry', { ts: Date.now(), type: 'image', outcome: isAi ? 'blocked' : 'passed', target: _imgHost, confidence: Math.round(score * 100) });
           debugLog(`Image [${isAi ? 'AI' : 'real'} ${Math.round(score * 100)}% style=${style} thresh=${threshold}]: ${imageUrl.slice(0, 80)}`);
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ isAiImage: isAi, confidence: Math.round(score * 100), method: 'model', style }));

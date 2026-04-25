@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Ross Walpole <ross.walpole@gmail.com>
+// SPDX-License-Identifier: GPL-3.0-only
+
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('logApi', {

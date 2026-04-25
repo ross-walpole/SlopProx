@@ -1,66 +1,234 @@
+<!-- SPDX-FileCopyrightText: 2026 Ross Walpole <ross.walpole@gmail.com> -->
+<!-- SPDX-License-Identifier: GPL-3.0-only -->
 <!DOCTYPE html>
 <html>
 <head>
   <meta charset="UTF-8">
-  <title>AI Slop Filter</title>
+  <title>SlopProx</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
   <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['JetBrains Mono', 'Cascadia Code', 'Consolas', 'Courier New', 'monospace'],
+          },
+          colors: {
+            g:   '#6db88a',
+            gb:  '#9dd4b0',
+            gd:  '#4a8a62',
+            gg:  '#060d07',
+            m:   '#b84fa0',
+            mb:  '#d070be',
+            md:  '#6b2960',
+            t:   '#080d09',
+            t2:  '#0d1610',
+            t3:  '#111d13',
+            tp:  '#040908',
+            tb:  '#2a4d2e',
+            tb2: '#3d7044',
+            ca:  '#d4a044',
+            cv:  '#9d86e0',
+            cr:  '#c06060',
+          }
+        }
+      }
+    }
+  </script>
   <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
-    body { font-family: 'Inter', system-ui, sans-serif; user-select: none; }
+    :root {
+      --c-g:          #6db88a;
+      --c-gb:         #9dd4b0;
+      --c-gd:         #4a8a62;
+      --c-m:          #b84fa0;
+      --c-t:          #080d09;
+      --c-tb:         #2a4d2e;
+      --c-tb2:        #3d7044;
+      --c-t2:         #0d1610;
+      --c-t3:         #111d13;
+      --c-gg:         #060d07;
+      --c-toggle-on:  #0c2015;
+      --c-thumb-off:  #2a4d2e;
+    }
+
+    body.vivid { filter: brightness(1.45) saturate(1.1); }
+
+    body {
+      background-color: #080d09;
+      color: #6db88a;
+      font-family: 'JetBrains Mono', 'Cascadia Code', 'Consolas', 'Courier New', monospace;
+      line-height: 1.55;
+      user-select: none;
+    }
     .title-bar { -webkit-app-region: drag; }
     .title-bar button { -webkit-app-region: no-drag; }
-    #installModal, #aboutModal, #privacyModal, #termsModal, #settingsModal, #bypassModal {
-                    display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.8);
-                    z-index: 50; align-items: center; justify-content: center; }
+
+    #installModal, #aboutModal, #privacyModal, #termsModal, #settingsModal {
+      display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.92);
+      z-index: 50; align-items: center; justify-content: center;
+    }
     #installModal.open, #aboutModal.open, #privacyModal.open, #termsModal.open,
-    #settingsModal.open, #bypassModal.open { display: flex; }
+    #settingsModal.open { display: flex; }
+
     .step { display: none; }
     .step.active { display: block; }
-    .step-dot { width: 26px; height: 26px; border-radius: 50%; display: flex;
-                align-items: center; justify-content: center; font-size: 11px;
-                font-weight: 700; flex-shrink: 0; transition: background 0.2s; }
+    .step-dot {
+      width: 24px; height: 24px; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 10px; font-weight: 700; flex-shrink: 0;
+      transition: background 0.2s, border-color 0.2s;
+    }
+
     input.path-input { user-select: text; }
-    .toggle-track { position: relative; width: 44px; height: 24px; border-radius: 9999px;
-                    background: #3f3f46; transition: background 0.2s; cursor: pointer; }
-    .toggle-track.on { background: #10b981; }
+    .toggle-track {
+      position: relative; width: 40px; height: 22px;
+      border-radius: 9999px; border: 1px solid var(--c-tb2);
+      background: var(--c-t3); transition: background 0.2s, border-color 0.2s; cursor: pointer;
+      flex-shrink: 0;
+    }
+    .toggle-track.on { background: var(--c-toggle-on); border-color: var(--c-g); }
     .toggle-track.disabled { opacity: 0.35; cursor: not-allowed; }
-    .toggle-thumb { position: absolute; top: 3px; left: 3px; width: 18px; height: 18px;
-                    border-radius: 9999px; background: #fff;
-                    transition: transform 0.2s; pointer-events: none; }
-    .toggle-track.on .toggle-thumb { transform: translateX(20px); }
+    .toggle-thumb {
+      position: absolute; top: 2px; left: 2px; width: 16px; height: 16px;
+      border-radius: 9999px; background: var(--c-thumb-off);
+      transition: transform 0.2s, background 0.2s; pointer-events: none;
+    }
+    .toggle-track.on .toggle-thumb {
+      transform: translateX(18px);
+      background: var(--c-gb);
+      box-shadow: 0 0 6px rgba(109,184,138,0.35);
+    }
+
     @keyframes spin { to { transform: rotate(360deg); } }
     .spinner { animation: spin 0.8s linear infinite; display: inline-block; }
+
     @keyframes digitIn {
-      from { transform: translateY(40%); opacity: 0; }
+      from { transform: translateY(35%); opacity: 0; }
       to   { transform: translateY(0);   opacity: 1; }
     }
-    .digit-roll { display: inline-block; animation: digitIn 0.32s cubic-bezier(0.4, 0, 0.2, 1) both; }
-    .footer-link { color: #52525b; transition: color 0.15s; cursor: pointer; }
-    .footer-link:hover { color: #a1a1aa; }
+    .digit-roll { display: inline-block; animation: digitIn 0.28s cubic-bezier(0.4,0,0.2,1) both; }
+
     @keyframes counterBump {
       0%   { transform: scale(1); }
-      40%  { transform: scale(1.22); }
-      100% { transform: scale(1); }
+      40%  { transform: scale(1.18); filter: brightness(1.3); }
+      100% { transform: scale(1); filter: brightness(1); }
     }
-    .counter-bump { animation: counterBump 0.28s cubic-bezier(0.4, 0, 0.2, 1) both; }
+    .counter-bump { animation: counterBump 0.26s cubic-bezier(0.4,0,0.2,1) both; }
+
+    .footer-link { color: var(--c-gd); transition: color 0.15s; cursor: pointer; }
+    .footer-link:hover { color: var(--c-g); }
+
+    @keyframes pulse-dot {
+      0%, 100% { opacity: 1; box-shadow: 0 0 4px var(--c-g); }
+      50%       { opacity: 0.4; box-shadow: none; }
+    }
+    .status-dot-live { animation: pulse-dot 2s ease-in-out infinite; }
+
+    .prompt-chev { color: #b84fa0; text-shadow: 0 0 10px rgba(184,79,160,0.5); }
+    .prompt-cur  {
+      color: var(--c-gb);
+      text-shadow: 0 0 8px rgba(157,212,176,0.4);
+      animation: blink-cur 1.1s step-end infinite;
+    }
+    @keyframes blink-cur { 0%,100% { opacity: 1; } 50% { opacity: 0; } }
+
+    .feature-card {
+      border-left: 2px solid var(--c-tb);
+      transition: border-left-color 0.2s, box-shadow 0.2s, background 0.1s;
+    }
+    .feature-card:hover { background: var(--c-gg); }
+    .feature-card.fc-on {
+      border-left-color: var(--c-g);
+      box-shadow: inset 3px 0 12px rgba(109,184,138,0.07);
+    }
+    .feature-card.fc-proxy.fc-on {
+      border-left-color: var(--c-m);
+      box-shadow: inset 3px 0 12px rgba(184,79,160,0.08);
+    }
+
+    .modal-panel {
+      position: relative;
+      background: var(--c-t2);
+      border: 1px solid var(--c-tb2);
+      border-radius: 6px;
+    }
+    .modal-panel::before, .modal-panel::after {
+      content: '';
+      position: absolute;
+      width: 8px; height: 8px;
+      border-color: var(--c-tb2);
+      border-style: solid;
+      opacity: 0.8;
+    }
+    .modal-panel::before { top: 5px; left:  5px; border-width: 1px 0 0 1px; }
+    .modal-panel::after  { top: 5px; right: 5px; border-width: 1px 1px 0 0; }
+
+    .term-rule {
+      height: 1px;
+      background: linear-gradient(to right, transparent, var(--c-tb2) 20%, var(--c-tb2) 80%, transparent);
+    }
+
+    ::-webkit-scrollbar { width: 4px; }
+    ::-webkit-scrollbar-track { background: var(--c-t); }
+    ::-webkit-scrollbar-thumb { background: var(--c-tb2); border-radius: 2px; }
+    ::-webkit-scrollbar-thumb:hover { background: var(--c-g); }
+
+    body::after {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background: repeating-linear-gradient(
+        to bottom, transparent 0px, transparent 1px,
+        rgba(0,255,80,0.018) 1px, rgba(0,255,80,0.018) 2px
+      );
+      pointer-events: none;
+      z-index: 9999;
+    }
+
+    /* Tabs */
+    .tab-panel { display: none; flex-direction: column; flex: 1; overflow: hidden; }
+    .tab-panel.active { display: flex; }
+
+    .tab-btn {
+      flex: 1; padding: 0 4px; height: 28px; font-size: 10px; font-weight: 600;
+      letter-spacing: 0.18em; color: var(--c-gd); border-bottom: 2px solid transparent;
+      transition: color 0.15s, border-color 0.15s; cursor: pointer; background: transparent;
+      border-top: none; border-left: none; border-right: none;
+    }
+    .tab-btn:hover { color: var(--c-g); }
+    .tab-btn.active { color: var(--c-gb); border-bottom-color: var(--c-g); }
+
+    /* Log entries */
+    @keyframes logSlideIn {
+      from { opacity: 0; transform: translateY(-6px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    .log-entry { animation: logSlideIn 0.18s ease both; }
   </style>
 </head>
-<body class="bg-zinc-950 text-zinc-100 flex flex-col h-screen overflow-hidden">
+<body class="bg-t text-g flex flex-col h-screen overflow-hidden text-[13px]">
 
   <!-- Title bar -->
-  <div class="title-bar h-10 bg-zinc-900 flex items-center px-4 border-b border-zinc-800 select-none shrink-0">
+  <div class="title-bar h-9 bg-tp flex items-center px-3 border-b border-tb select-none shrink-0">
     <div class="flex items-center gap-2 shrink-0">
-      <span class="text-xl">🛡️</span>
-      <span class="font-semibold text-sm">AI Slop Filter</span>
+      <span class="text-[14px] font-bold leading-none"><span class="prompt-chev">&gt;</span><span class="prompt-cur">_</span></span>
+      <span class="text-gb font-bold tracking-[0.18em] text-[12px]">SLOPPROX</span>
     </div>
-    <div class="flex-1 flex items-center gap-1.5 px-4 min-w-0">
-      <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0" id="statusDot"></span>
-      <span class="text-zinc-500 text-[10px] truncate" id="statusText">Initializing…</span>
+    <div class="flex-1 flex items-center gap-1.5 px-3 min-w-0">
+      <span class="w-1.5 h-1.5 rounded-full bg-g shrink-0 status-dot-live" id="statusDot"></span>
+      <span class="text-g text-[11px] truncate tracking-wide" id="statusText">Initializing…</span>
     </div>
     <div class="flex gap-1 shrink-0">
+      <button id="themeToggle" title="Toggle brightness"
+              class="w-8 h-6 border border-tb hover:border-tb2 rounded flex items-center justify-center text-gd hover:text-g text-[9px] font-bold transition-colors tracking-widest">
+        DIM
+      </button>
       <button id="settingsBtn" title="Settings"
-              class="w-7 h-7 hover:bg-zinc-700 rounded flex items-center justify-center text-zinc-400 hover:text-zinc-200 transition-colors">
-        <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none"
+              class="w-6 h-6 border border-tb hover:border-tb2 rounded flex items-center justify-center text-gd hover:text-g transition-colors">
+        <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none"
              stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <circle cx="12" cy="12" r="3"/>
           <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33
@@ -73,524 +241,487 @@
         </svg>
       </button>
       <button onclick="window.electronAPI.send('window-minimize')"
-              class="w-7 h-7 hover:bg-zinc-700 rounded flex items-center justify-center text-zinc-400 text-xs">─</button>
+              class="w-6 h-6 border border-tb hover:border-tb2 rounded flex items-center justify-center text-gd hover:text-g text-[10px] transition-colors">─</button>
       <button onclick="window.electronAPI.send('window-close')"
-              class="w-7 h-7 hover:bg-red-600 hover:text-white rounded flex items-center justify-center text-zinc-400 text-xs">✕</button>
+              class="w-6 h-6 border border-tb hover:border-red-700 hover:bg-red-900/30 rounded flex items-center justify-center text-gd hover:text-red-400 text-[10px] transition-colors">✕</button>
     </div>
+  </div>
+
+  <!-- Tab nav -->
+  <div class="shrink-0 flex border-b border-tb bg-tp px-1">
+    <button class="tab-btn active" data-tab="monitor">MONITOR</button>
+    <button class="tab-btn" data-tab="filters">FILTERS</button>
+    <button id="bypassTabBtn" class="tab-btn hidden" data-tab="bypass">BYPASS</button>
+    <button class="tab-btn" data-tab="extension">EXTENSION</button>
   </div>
 
   <!-- Update banner -->
-  <div id="updateBanner" class="hidden fixed top-10 left-4 right-4 bg-emerald-900/90 border border-emerald-700 rounded-xl p-3 flex items-center justify-between z-50">
-    <span id="updateBannerText" class="text-emerald-200 text-sm font-medium">Update available</span>
+  <div id="updateBanner" class="hidden fixed top-[64px] left-2 right-2 bg-t2 border border-tb2 rounded p-2.5 flex items-center justify-between z-40 gap-3">
+    <span id="updateBannerText" class="text-g text-[11px] font-semibold tracking-wide">Update available</span>
     <div id="updateProgressWrap" class="flex items-center gap-2">
-      <div class="w-24 bg-emerald-800 rounded-full h-1.5 overflow-hidden">
-        <div id="updateProgressBar" class="h-full rounded-full transition-all duration-500 bg-emerald-400" style="width:0%"></div>
+      <div class="w-20 bg-gg border border-tb rounded-full h-1 overflow-hidden">
+        <div id="updateProgressBar" class="h-full rounded-full transition-all duration-500 bg-g" style="width:0%"></div>
       </div>
-      <span id="updateProgressPct" class="text-emerald-300 text-xs tabular-nums">0%</span>
+      <span id="updateProgressPct" class="text-gd text-[9px] tabular-nums">0%</span>
     </div>
-    <button id="updateRestartBtn" class="hidden bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs py-1.5 px-3 rounded-lg transition-colors">Restart & Update</button>
+    <button id="updateRestartBtn" class="hidden border border-m text-m hover:bg-md/30 text-[10px] font-semibold py-1 px-2.5 rounded tracking-wide transition-colors">RESTART &amp; UPDATE</button>
   </div>
 
-  <!-- Proxy Master Toggle -->
-  <div id="proxyCard" class="flex items-center justify-between bg-zinc-900 rounded-2xl px-4 py-3.5 border border-zinc-800 cursor-pointer select-none mx-4 mt-4 mb-3">
-    <div class="flex items-center gap-3">
-      <span class="text-lg">🔌</span>
-      <div>
-        <div class="font-semibold text-sm">Proxy Active</div>
-        <div class="text-zinc-500 text-xs" id="proxySubtitle">Intercepts browser traffic • Bypass list below</div>
-      </div>
-    </div>
-    <div id="proxyTrack" class="toggle-track on"><div class="toggle-thumb"></div></div>
-  </div>
-
-  <!-- Startup overlay — blocks interaction until cert is installed ──────── -->
+  <!-- Startup overlay -->
   <div id="initOverlay"
-       style="top:40px"
-       class="fixed inset-x-0 bottom-0 bg-zinc-950 z-40 flex flex-col items-center justify-center gap-4 transition-opacity duration-300">
-    <div class="text-4xl spinner" id="overlaySpinner">⟳</div>
-    <div class="text-zinc-200 font-semibold text-sm" id="overlayTitle">Starting up…</div>
-    <div class="text-zinc-500 text-xs text-center px-10 leading-relaxed" id="overlayStatus">Installing certificate…</div>
+       style="top:64px"
+       class="fixed inset-x-0 bottom-0 bg-t z-40 flex flex-col items-center justify-center gap-4 transition-opacity duration-300">
+    <div class="text-[28px] spinner text-g" id="overlaySpinner" style="text-shadow:0 0 16px rgba(109,184,138,0.5)">⟳</div>
+    <div class="text-gb font-bold text-[13px] tracking-widest" id="overlayTitle">STARTING UP</div>
+    <div class="text-g text-[10px] text-center px-10 leading-relaxed tracking-wide" id="overlayStatus">Starting up…</div>
     <button id="overlayRetry"
-            class="hidden mt-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-medium
-                   px-4 py-2 rounded-xl border border-zinc-700 transition-colors">
-      Retry
+            class="hidden mt-2 border border-tb2 hover:border-g text-gd hover:text-g text-[10px] font-medium
+                   px-4 py-2 rounded tracking-widest transition-colors">
+      RETRY
     </button>
   </div>
 
-  <div class="flex-1 flex flex-col overflow-hidden">
+  <!-- ── MONITOR TAB ─────────────────────────────────────────────────── -->
+  <div id="tab-monitor" class="tab-panel active">
 
-    <!-- Scrollable content -->
-    <div class="flex-1 overflow-y-auto p-4 flex flex-col gap-3">
-
-      <!-- Bypass List -->
-      <div id="bypassPanel" class="bg-zinc-900 rounded-2xl border border-zinc-800 overflow-hidden hidden">
-        <div class="px-4 py-2.5 flex items-center justify-between border-b border-zinc-800">
-          <span class="text-zinc-500 text-[9px] tracking-widest font-medium">BYPASS DOMAINS</span>
-          <span class="text-zinc-600 text-xs" id="bypassCount">0</span>
-        </div>
-        <div class="p-3 flex flex-wrap gap-2" id="bypassList"></div>
+    <!-- Stats strip -->
+    <div class="px-3 py-2.5 border-b border-tb flex items-center gap-3 shrink-0">
+      <div class="flex items-center gap-1.5 flex-1 justify-center">
+        <span class="text-[22px] font-bold text-g tabular-nums leading-none" id="slop-counter"
+              style="text-shadow:0 0 10px rgba(109,184,138,0.4)">0</span>
+        <span class="text-gd text-[9px] tracking-widest">TEXT</span>
       </div>
-
-      <!-- Stats -->
-      <div class="grid grid-cols-4 gap-2.5">
-        <div class="bg-zinc-900 rounded-2xl p-3.5 text-center border border-zinc-800">
-          <div class="text-3xl font-bold text-emerald-400 tabular-nums leading-none" id="slop-counter">0</div>
-          <div class="text-zinc-600 text-[9px] mt-1 tracking-widest font-medium">TEXT BLOCKED</div>
-        </div>
-        <div class="bg-zinc-900 rounded-2xl p-3.5 text-center border border-zinc-800">
-          <div class="text-3xl font-bold text-amber-400 tabular-nums leading-none" id="ads-counter">0</div>
-          <div class="text-zinc-600 text-[9px] mt-1 tracking-widest font-medium">ADS BLOCKED</div>
-        </div>
-        <div class="bg-zinc-900 rounded-2xl p-3.5 text-center border border-zinc-800">
-          <div class="text-3xl font-bold text-violet-400 tabular-nums leading-none" id="images-counter">0</div>
-          <div class="text-zinc-600 text-[9px] mt-1 tracking-widest font-medium">AI IMAGES</div>
-        </div>
-        <div class="bg-zinc-900 rounded-2xl p-3.5 text-center border border-zinc-800">
-          <div class="text-3xl font-bold text-red-400 tabular-nums leading-none" id="youtube-counter">0</div>
-          <div class="text-zinc-600 text-[9px] mt-1 tracking-widest font-medium">YT AI VIDS</div>
-        </div>
+      <div class="w-px h-5 bg-tb shrink-0"></div>
+      <div class="flex items-center gap-1.5 flex-1 justify-center">
+        <span class="text-[22px] font-bold text-ca tabular-nums leading-none" id="ads-counter"
+              style="text-shadow:0 0 10px rgba(212,160,68,0.35)">0</span>
+        <span class="text-gd text-[9px] tracking-widest">ADS</span>
       </div>
-
-      <!-- Time saved -->
-      <div class="bg-zinc-900 rounded-2xl px-4 py-2.5 border border-zinc-800 flex items-center justify-between">
-        <div class="flex items-center gap-1.5">
-          <span class="text-zinc-500 text-[9px] tracking-widest font-medium">EST. TIME SAVED</span>
-          <span class="text-zinc-600 text-[9px] cursor-default select-none" title="5s per text · 50ms per ad · 1s per image · 30s per video">ⓘ</span>
-        </div>
-        <span class="text-sm font-semibold text-zinc-200 tabular-nums" id="time-saved-value">—</span>
+      <div class="w-px h-5 bg-tb shrink-0"></div>
+      <div class="flex items-center gap-1.5 flex-1 justify-center">
+        <span class="text-[22px] font-bold text-cv tabular-nums leading-none" id="images-counter"
+              style="text-shadow:0 0 10px rgba(157,134,224,0.35)">0</span>
+        <span class="text-gd text-[9px] tracking-widest">IMG</span>
       </div>
-
-      <!-- AI Text Filter -->
-      <div id="mainCard" class="flex items-center justify-between bg-zinc-900 rounded-2xl px-4 py-3.5 border border-zinc-800 cursor-pointer select-none">
-        <div class="flex items-center gap-3">
-          <span class="text-lg">🛡️</span>
-          <div>
-            <div class="font-semibold text-sm">AI Text Filter</div>
-            <div class="text-zinc-500 text-xs" id="mainSubtitle">Filters AI-generated text via proxy</div>
-          </div>
-        </div>
-        <div id="mainTrack" class="toggle-track on"><div class="toggle-thumb"></div></div>
+      <div class="w-px h-5 bg-tb shrink-0"></div>
+      <div class="flex items-center gap-1.5 flex-1 justify-center">
+        <span class="text-[22px] font-bold text-cr tabular-nums leading-none" id="youtube-counter"
+              style="text-shadow:0 0 10px rgba(192,96,96,0.35)">0</span>
+        <span class="text-gd text-[9px] tracking-widest">YT</span>
       </div>
-
-      <!-- Ad Blocker -->
-      <div id="adCard" class="flex items-center justify-between bg-zinc-900 rounded-2xl px-4 py-3.5 border border-zinc-800 cursor-pointer select-none">
-        <div class="flex items-center gap-3">
-          <span class="text-lg">🚫</span>
-          <div>
-            <div class="font-semibold text-sm">Ad Blocker</div>
-            <div class="text-zinc-500 text-xs">Block intrusive ads system-wide via proxy</div>
-          </div>
+      <div class="w-px h-5 bg-tb shrink-0"></div>
+      <div class="flex items-center gap-1.5 shrink-0">
+        <span class="text-[16px] font-bold text-gb tabular-nums" id="time-saved-value">—</span>
+        <div class="flex flex-col items-start gap-0">
+          <span class="text-gd text-[8px] tracking-widest leading-none">TIME</span>
+          <span class="text-gd text-[8px] tracking-widest leading-none">SAVED</span>
         </div>
-        <div id="adTrack" class="toggle-track on"><div class="toggle-thumb"></div></div>
+        <span class="text-gd text-[10px] cursor-default" title="5s/text · 50ms/ad · 1s/image · 30s/video">ⓘ</span>
       </div>
-
-      <!-- Browser Extension -->
-      <div class="bg-zinc-900 rounded-2xl px-4 py-3.5 border border-zinc-800">
-        <div class="flex items-center gap-3 mb-3">
-          <span class="text-lg">🧩</span>
-          <div class="flex-1 min-w-0">
-            <div class="font-semibold text-sm">Browser Extension</div>
-            <div class="text-zinc-500 text-xs" id="extSubtitle">Enables social media filtering &amp; AI image detection</div>
-          </div>
-          <span id="extBadge"
-                class="shrink-0 text-[9px] font-bold px-2 py-0.5 rounded-full border tracking-wide
-                       bg-zinc-800 text-zinc-500 border-zinc-700">
-            NOT INSTALLED
-          </span>
-        </div>
-        <div class="flex gap-2">
-          <button id="installExtBtn"
-                  class="flex-1 bg-indigo-600 hover:bg-indigo-500 active:scale-95 transition-all
-                         text-white font-semibold text-xs py-2 rounded-xl">
-            Install Extension
-          </button>
-          <button id="openFolderBtn"
-                  title="Open extension folder in Explorer"
-                  class="hidden px-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-400 text-xs font-medium rounded-xl transition-colors">
-            📂
-          </button>
-        </div>
-      </div>
-
-      <!-- AI Image Detection -->
-      <div id="imageCard" class="flex items-center justify-between bg-zinc-900 rounded-2xl px-4 py-3.5 border border-zinc-800 select-none">
-        <div class="flex items-center gap-3">
-          <span class="text-lg">🖼️</span>
-          <div>
-            <div class="font-semibold text-sm">AI Image Detection</div>
-            <div class="text-zinc-500 text-xs" id="imgSubtitle">Install extension above to enable</div>
-          </div>
-        </div>
-        <div id="imageTrack" class="toggle-track disabled"><div class="toggle-thumb"></div></div>
-      </div>
-
-      <!-- Image model progress -->
-      <div id="imgModelProgress" class="hidden bg-zinc-900 rounded-2xl px-4 py-3.5 border border-zinc-800">
-        <div class="flex items-center justify-between mb-2">
-          <span class="text-zinc-300 text-[11px] font-semibold spinner-label" id="imgProgressLabel">Loading image ensemble…</span>
-          <span class="text-zinc-500 text-[10px] tabular-nums" id="imgProgressFraction">0 / 3</span>
-        </div>
-        <div class="w-full bg-zinc-800 rounded-full h-1.5 overflow-hidden mb-2">
-          <div id="imgProgressBar" class="h-full rounded-full transition-all duration-500"
-               style="width:0%; background: linear-gradient(90deg, #7c3aed, #a78bfa)"></div>
-        </div>
-        <div class="text-zinc-500 text-[10px] truncate" id="imgProgressModel"></div>
-      </div>
-
-      <!-- Image model ready -->
-      <div id="imgModelReady" class="hidden bg-zinc-900 rounded-2xl px-4 py-3.5 border border-emerald-900/50">
-        <div class="flex items-center gap-3">
-          <span class="w-2 h-2 rounded-full bg-emerald-400 shrink-0" style="box-shadow:0 0 6px #34d399"></span>
-          <div>
-            <div class="text-emerald-400 text-[11px] font-semibold">Ensemble ready</div>
-            <div class="text-zinc-500 text-[10px]" id="imgReadyLabel">3 / 3 models active</div>
-          </div>
-        </div>
-      </div>
-
-      <!-- YouTube AI Filter -->
-      <div class="flex items-center justify-between bg-zinc-900 rounded-2xl px-4 py-3.5 border border-zinc-800 select-none">
-        <div class="flex items-center gap-3">
-          <span class="text-lg">▶️</span>
-          <div>
-            <div class="font-semibold text-sm">YouTube AI Filter</div>
-            <div class="text-zinc-500 text-xs" id="ytSubtitle">Warns when creator discloses AI-generated content</div>
-          </div>
-        </div>
-        <div id="ytTrack" class="toggle-track on"><div class="toggle-thumb"></div></div>
-      </div>
-
     </div>
 
-    <!-- Bottom bar -->
-    <div class="shrink-0 px-4 pb-4 pt-3 border-t border-zinc-800/60 flex flex-col gap-2.5">
-      <button id="bypassManagerBtn"
-              class="w-full bg-zinc-900 hover:bg-zinc-800 transition-colors text-zinc-400
-                     text-xs font-medium py-2.5 rounded-xl border border-zinc-800 flex items-center justify-center gap-2">
-        <span>🔀</span> Manage Bypass Domains
-        <span class="text-zinc-600 font-mono" id="bypassBadge"></span>
-      </button>
-      <div class="flex gap-2">
-        <button id="resetBtn"
-                class="flex-1 bg-zinc-900 hover:bg-zinc-800 transition-colors text-zinc-500
-                       text-xs font-medium py-2.5 rounded-xl border border-zinc-800">
-          Reset Counters
-        </button>
-        <button id="certBtn"
-                class="flex-1 bg-zinc-900 hover:bg-zinc-800 transition-colors text-zinc-500
-                       text-xs font-medium py-2.5 rounded-xl border border-zinc-800">
-          Reinstall Cert
-        </button>
-        <button id="debugLogBtn"
-                class="flex-1 bg-zinc-900 hover:bg-zinc-800 transition-colors text-zinc-500
-                       text-xs font-medium py-2.5 rounded-xl border border-zinc-800">
-          Debug Log
-        </button>
+    <!-- Log header -->
+    <div class="flex items-center justify-between px-3 py-1.5 border-b border-tb shrink-0 bg-gg">
+      <div class="flex items-center gap-1.5">
+        <span class="w-1.5 h-1.5 rounded-full bg-g status-dot-live" style="flex-shrink:0"></span>
+        <span class="text-gd text-[9.5px] tracking-[0.2em] font-medium">CLASSIFICATION LOG</span>
       </div>
+      <button id="clearLogBtn" class="text-gd hover:text-g text-[9px] tracking-widest transition-colors font-medium">CLEAR</button>
+    </div>
 
-      <div class="text-center text-[10px] leading-relaxed">
-        <span class="footer-link" id="privacyLink">Privacy</span>
-        <span class="text-zinc-800 mx-1.5">·</span>
-        <span class="footer-link" id="termsLink">Terms &amp; Attribution</span>
-        <span class="text-zinc-800 mx-1.5">·</span>
-        <span class="footer-link" id="aboutLink">About</span>
+    <!-- Log entries -->
+    <div id="logArea" class="flex-1 overflow-y-auto font-mono text-[10.5px]">
+      <div id="logEmpty" class="flex flex-col items-center justify-center h-full gap-3 text-center px-8">
+        <div class="text-[32px] text-tb" style="line-height:1">◈</div>
+        <div class="text-gd text-[11px] tracking-wide">No classifications yet</div>
+        <div class="text-tb2 text-[10px] leading-relaxed">Browse the web — text, images, ads and YouTube AI<br>disclosure events will appear here in real time.</div>
       </div>
     </div>
 
   </div>
 
-  <!-- Install Modal -->
+  <!-- ── FILTERS TAB ─────────────────────────────────────────────────── -->
+  <div id="tab-filters" class="tab-panel overflow-y-auto">
+
+    <div class="px-4 pt-3 pb-1.5 flex items-center gap-3 shrink-0">
+      <span class="text-gd text-[10px] tracking-[0.3em] font-medium shrink-0">ACTIVE FILTERS</span>
+      <div class="flex-1 h-px bg-tb"></div>
+    </div>
+
+    <!-- AI Text Filter -->
+    <div id="mainCard" class="feature-card fc-on px-4 py-3 cursor-pointer select-none flex items-center justify-between border-b border-tb">
+      <div class="flex items-center gap-3">
+        <span class="text-[10px] font-bold w-9 text-center py-0.5 border border-tb2 text-g tracking-widest shrink-0">TXT</span>
+        <div>
+          <div class="font-semibold text-[13px] text-gb">AI Text Filter</div>
+          <div class="text-gd text-[11px]" id="mainSubtitle">Filters AI-generated text</div>
+        </div>
+      </div>
+      <div id="mainTrack" class="toggle-track on"><div class="toggle-thumb"></div></div>
+    </div>
+
+    <!-- Ad Blocker -->
+    <div id="adCard" class="feature-card fc-on px-4 py-3 cursor-pointer select-none flex items-center justify-between border-b border-tb">
+      <div class="flex items-center gap-3">
+        <span class="text-[10px] font-bold w-9 text-center py-0.5 border border-tb2 text-ca tracking-widest shrink-0">ADS</span>
+        <div>
+          <div class="font-semibold text-[13px] text-gb">Ad Blocker</div>
+          <div class="text-gd text-[11px]" id="adSubtitle">Block intrusive ads via extension</div>
+        </div>
+      </div>
+      <div id="adTrack" class="toggle-track on"><div class="toggle-thumb"></div></div>
+    </div>
+
+    <!-- YouTube AI Filter -->
+    <div class="feature-card fc-on px-4 py-3 select-none flex items-center justify-between border-b border-tb">
+      <div class="flex items-center gap-3">
+        <span class="text-[10px] font-bold w-9 text-center py-0.5 border border-tb2 text-cr tracking-widest shrink-0">YT</span>
+        <div>
+          <div class="font-semibold text-[13px] text-gb">YouTube AI Filter</div>
+          <div class="text-gd text-[11px]" id="ytSubtitle">Warns when creator discloses AI-generated content</div>
+        </div>
+      </div>
+      <div id="ytTrack" class="toggle-track on"><div class="toggle-thumb"></div></div>
+    </div>
+
+    <!-- Image Detection -->
+    <div id="imageCard" class="feature-card px-4 py-3 select-none flex items-center justify-between border-b border-tb">
+      <div class="flex items-center gap-3">
+        <span class="text-[10px] font-bold w-9 text-center py-0.5 border border-tb2 text-cv tracking-widest shrink-0">IMG</span>
+        <div>
+          <div class="font-semibold text-[13px] text-gb">AI Image Detection</div>
+          <div class="text-gd text-[11px]" id="imgSubtitle">Install extension to enable</div>
+        </div>
+      </div>
+      <div id="imageTrack" class="toggle-track disabled"><div class="toggle-thumb"></div></div>
+    </div>
+
+    <!-- Image model progress -->
+    <div id="imgModelProgress" class="hidden px-4 py-3.5 border-b border-tb">
+      <div class="flex items-center justify-between mb-2">
+        <span class="text-gb text-[11px] font-semibold" id="imgProgressLabel">Loading image ensemble…</span>
+        <span class="text-gd text-[10px] tabular-nums" id="imgProgressFraction">0 / 3</span>
+      </div>
+      <div class="w-full bg-gg border border-tb h-px overflow-hidden mb-2">
+        <div id="imgProgressBar" class="h-full transition-all duration-500"
+             style="width:0%; background: linear-gradient(90deg, #661155, #cc22aa)"></div>
+      </div>
+      <div class="text-gd text-[10px] truncate" id="imgProgressModel"></div>
+    </div>
+
+    <!-- Image model ready -->
+    <div id="imgModelReady" class="hidden px-4 py-3.5 border-b border-tb">
+      <div class="flex items-center gap-3">
+        <span class="w-1.5 h-1.5 rounded-full bg-g shrink-0" style="box-shadow:0 0 4px #6db88a"></span>
+        <div>
+          <div class="text-g text-[12px] font-semibold tracking-wide">ENSEMBLE READY</div>
+          <div class="text-gd text-[10px]" id="imgReadyLabel">3 / 3 models active</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="flex-1 min-h-[16px]"></div>
+
+    <!-- Enhanced Mode section -->
+    <div class="px-4 pt-3 pb-1.5 flex items-center gap-3 shrink-0 border-t border-tb">
+      <span class="text-gd text-[10px] tracking-[0.3em] font-medium shrink-0">ENHANCED MODE</span>
+      <div class="flex-1 h-px bg-tb"></div>
+    </div>
+
+    <div id="proxyCard" class="feature-card fc-proxy px-4 py-3 cursor-pointer select-none flex items-center justify-between border-b border-tb">
+      <div class="flex items-center gap-3">
+        <span class="text-[10px] font-bold w-9 text-center py-0.5 border border-tb2 text-m tracking-widest shrink-0">PRX</span>
+        <div>
+          <div class="font-semibold text-[13px] text-gb">Local HTTPS Proxy</div>
+          <div class="text-gd text-[11px]" id="proxySubtitle">Off — extension-only mode active</div>
+        </div>
+      </div>
+      <div id="proxyTrack" class="toggle-track"><div class="toggle-thumb"></div></div>
+    </div>
+
+    <div class="px-4 py-3 text-[10px] text-gd leading-relaxed tracking-wide">
+      Runs a local HTTPS proxy on this machine. Routes traffic from <span class="text-g font-medium">all browsers and apps</span> through SlopProx — enabling system-wide filtering beyond Chrome. Installs a <span class="text-g font-medium">local CA certificate</span>. Not required for extension-based filtering. Recommended for power users.
+    </div>
+
+  </div>
+
+  <!-- ── BYPASS TAB ──────────────────────────────────────────────────── -->
+  <div id="tab-bypass" class="tab-panel flex-col overflow-hidden">
+
+    <div class="px-4 pt-3 pb-2 shrink-0">
+      <div class="text-gb text-[11px] font-semibold tracking-widest mb-0.5">BYPASS DOMAINS</div>
+      <div class="text-gd text-[10px] tracking-wide">These hosts connect directly, bypassing the proxy.</div>
+    </div>
+
+    <!-- Add domain -->
+    <div class="flex gap-2 px-4 pb-3 shrink-0">
+      <input id="bypassAddInput" type="text" placeholder="e.g. app.example.com"
+             class="flex-1 bg-t3 border border-tb focus:border-tb2 rounded px-3 py-1.5 text-[10px] text-g placeholder-tb2 outline-none font-mono transition-colors" />
+      <button id="bypassAddBtn"
+              class="border border-g text-g hover:bg-gg text-[10px] font-semibold px-3 py-1.5 rounded transition-colors shrink-0 tracking-widest">
+        ADD
+      </button>
+    </div>
+
+    <!-- Bypass list -->
+    <div class="flex-1 overflow-y-auto px-4 pb-4">
+      <div id="bypassInlineList" class="flex flex-col gap-1.5">
+        <div class="text-gd text-[10px] text-center py-5 tracking-wide">No bypass domains added yet.</div>
+      </div>
+    </div>
+
+    <!-- Info footer -->
+    <div class="shrink-0 px-4 pb-4 text-g text-[9px] leading-relaxed tracking-wide border-t border-tb pt-3">
+      <span class="text-gb font-medium">How it works:</span> When an app rejects the proxy certificate, SlopProx detects it and prompts you to add the host here. That host then connects directly.
+    </div>
+  </div>
+
+  <!-- ── EXTENSION TAB ───────────────────────────────────────────────── -->
+  <div id="tab-extension" class="tab-panel overflow-y-auto">
+
+    <div class="px-4 pt-3 pb-1.5 flex items-center gap-3 shrink-0">
+      <span class="text-gd text-[10px] tracking-[0.3em] font-medium shrink-0">BROWSER EXTENSION</span>
+      <div class="flex-1 h-px bg-tb"></div>
+    </div>
+
+    <!-- Extension install card -->
+    <div class="px-4 py-3 border-b border-tb">
+      <div class="flex items-center gap-3 mb-2.5">
+        <span class="text-[10px] font-bold w-9 text-center py-0.5 border border-tb2 text-mb tracking-widest shrink-0">EXT</span>
+        <div class="flex-1 min-w-0">
+          <div class="font-semibold text-[13px] text-gb">Browser Extension</div>
+          <div class="text-gd text-[11px]" id="extSubtitle">Enables social media filtering &amp; AI image detection</div>
+        </div>
+        <span id="extBadge" class="shrink-0 text-[9.5px] font-bold px-1.5 py-0.5 border tracking-widest border-tb text-gd">
+          NOT INSTALLED
+        </span>
+      </div>
+      <div class="flex gap-2">
+        <button id="installExtBtn"
+                class="flex-1 border border-m text-m hover:bg-md/20 active:scale-95 transition-all
+                       font-semibold text-[11px] py-2 tracking-widest">
+          INSTALL EXTENSION
+        </button>
+        <button id="openFolderBtn" title="Open extension folder in Explorer"
+                class="hidden px-3 border border-tb hover:border-tb2 text-gd text-[11px] font-medium transition-colors">
+          [DIR]
+        </button>
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <div class="px-4 pt-4 pb-4 text-center text-[10px] leading-relaxed tracking-wide">
+      <span class="footer-link" id="privacyLink">PRIVACY</span>
+      <span class="text-tb mx-1.5">·</span>
+      <span class="footer-link" id="termsLink">TERMS</span>
+      <span class="text-tb mx-1.5">·</span>
+      <span class="footer-link" id="aboutLink">ABOUT</span>
+    </div>
+  </div>
+
+  <!-- ── Install Modal ──────────────────────────────────────────────── -->
   <div id="installModal">
-    <div class="bg-zinc-900 border border-zinc-700 rounded-3xl p-6 w-[440px] mx-4 shadow-2xl">
-
+    <div class="modal-panel p-5 w-[420px] mx-4 shadow-2xl">
       <div class="flex items-center justify-between mb-5">
-        <div class="font-bold text-sm">Install Browser Extension</div>
-        <button id="modalClose" class="text-zinc-600 hover:text-zinc-300 text-lg leading-none transition-colors">✕</button>
+        <div class="font-bold text-gb tracking-widest text-[11px]">INSTALL BROWSER EXTENSION</div>
+        <button id="modalClose" class="text-gd hover:text-g text-[13px] leading-none transition-colors border border-tb hover:border-tb2 w-6 h-6 flex items-center justify-center rounded">✕</button>
       </div>
 
-      <div class="flex items-center gap-2 mb-6">
-        <div class="step-dot" id="dot1">1</div>
-        <div class="flex-1 h-px bg-zinc-700" id="line1"></div>
-        <div class="step-dot" id="dot2">2</div>
-        <div class="flex-1 h-px bg-zinc-700" id="line2"></div>
-        <div class="step-dot" id="dot3">3</div>
-        <div class="flex-1 h-px bg-zinc-700" id="line3"></div>
-        <div class="step-dot" id="dot4">✓</div>
+      <div class="flex items-center gap-2 mb-5">
+        <div class="step-dot border border-tb2 text-gd" id="dot1">1</div>
+        <div class="flex-1 h-px bg-tb" id="line1"></div>
+        <div class="step-dot border border-tb2 text-gd" id="dot2">2</div>
+        <div class="flex-1 h-px bg-tb" id="line2"></div>
+        <div class="step-dot border border-tb2 text-gd" id="dot3">3</div>
+        <div class="flex-1 h-px bg-tb" id="line3"></div>
+        <div class="step-dot border border-tb2 text-gd" id="dot4">✓</div>
       </div>
 
-      <!-- Step 1 -->
       <div class="step active" id="step1">
         <div class="text-center py-2">
-          <div class="text-3xl mb-3"><span class="spinner">⟳</span></div>
-          <div class="text-zinc-200 font-semibold text-sm mb-2" id="step1Title">Opening browser…</div>
-          <p class="text-zinc-500 text-xs leading-relaxed mb-4">
+          <div class="text-[28px] mb-3 text-g spinner" style="text-shadow:0 0 10px rgba(109,184,138,0.4)">⟳</div>
+          <div class="text-gb font-semibold text-[12px] mb-2 tracking-wide" id="step1Title">Opening browser…</div>
+          <p class="text-g text-[10px] leading-relaxed mb-4">
             Your browser is opening. Copy the address below and<br>
             paste it in your address bar to reach Extensions:
           </p>
-          <div class="bg-zinc-800 rounded-xl p-2.5 flex items-center justify-between gap-2 mb-4">
-            <span class="text-zinc-300 font-mono text-xs" id="extUrlDisplay">chrome://extensions</span>
-            <button id="copyExtUrl" class="text-indigo-400 hover:text-indigo-300 text-xs font-medium shrink-0 transition-colors">Copy</button>
+          <div class="bg-t3 border border-tb rounded p-2.5 flex items-center justify-between gap-2 mb-4">
+            <span class="text-g font-mono text-[10px]" id="extUrlDisplay">chrome://extensions</span>
+            <button id="copyExtUrl" class="text-m hover:text-mb text-[10px] font-medium shrink-0 transition-colors tracking-wide">COPY</button>
           </div>
-          <div class="text-zinc-600 text-xs" id="step1CountdownText">Moving on in <span id="step1Countdown">3</span>…</div>
+          <div class="text-g text-[9.5px] tracking-wide">Moving on in <span id="step1Countdown">3</span>…</div>
         </div>
       </div>
 
-      <!-- Step 2 -->
       <div class="step" id="step2">
-        <div class="font-semibold text-sm text-zinc-200 mb-2">Enable Developer Mode</div>
-        <p class="text-zinc-500 text-xs leading-relaxed mb-3">
+        <div class="font-semibold text-[11px] text-gb mb-2 tracking-widest">ENABLE DEVELOPER MODE</div>
+        <p class="text-g text-[10px] leading-relaxed mb-3">
           In the top-right of the Extensions page, turn on
-          <span class="text-zinc-200 font-medium">Developer mode</span>.
-          The toolbar will expand to show <span class="text-zinc-200 font-medium">"Load unpacked"</span>.
+          <span class="text-g font-medium">Developer mode</span>.
+          The toolbar expands to show <span class="text-g font-medium">"Load unpacked"</span>.
         </p>
-        <div class="bg-zinc-800 border border-zinc-700 rounded-xl p-3 mb-4 flex items-center gap-3">
-          <span class="text-xl shrink-0">🔧</span>
-          <div class="text-xs text-zinc-400 leading-relaxed">
-            Top-right corner → <span class="text-zinc-200 font-medium">Developer mode</span>
-            → toggle <span class="text-emerald-400 font-bold">ON</span>
+        <div class="bg-t3 border border-tb rounded p-3 mb-4 flex items-center gap-3">
+          <span class="text-gd text-[11px] font-mono shrink-0">[ DEV ]</span>
+          <div class="text-[10px] text-g leading-relaxed">
+            Top-right corner → <span class="text-g font-medium">Developer mode</span>
+            → toggle <span class="text-gb font-bold">ON</span>
           </div>
         </div>
-        <button id="step2Next" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs py-2.5 rounded-xl transition-colors">Developer mode is on →</button>
+        <button id="step2Next" class="w-full border border-m text-m hover:bg-md/20 font-semibold text-[10px] py-2 rounded tracking-widest transition-colors">DEVELOPER MODE IS ON →</button>
       </div>
 
-      <!-- Step 3 -->
       <div class="step" id="step3">
-        <div class="font-semibold text-sm text-zinc-200 mb-2">Load the Extension Folder</div>
-        <p class="text-zinc-500 text-xs leading-relaxed mb-3">
-          Click <span class="text-zinc-200 font-medium">"Load unpacked"</span>, then
-          select the folder below. The path is already on your clipboard — just
-          <span class="text-zinc-200 font-medium">paste it</span> in the file picker.
+        <div class="font-semibold text-[11px] text-gb mb-2 tracking-widest">LOAD THE EXTENSION FOLDER</div>
+        <p class="text-g text-[10px] leading-relaxed mb-3">
+          Click <span class="text-g font-medium">"Load unpacked"</span>, then select the folder below.
+          The path is on your clipboard — just <span class="text-g font-medium">paste</span> in the file picker.
         </p>
-        <div class="bg-zinc-800 border border-zinc-700 rounded-xl p-2.5 flex items-center gap-2 mb-2">
-          <input id="extPathInput" readonly class="path-input flex-1 bg-transparent text-zinc-300 font-mono text-xs outline-none truncate" value="loading…">
-          <button id="copyPathBtn" class="text-indigo-400 hover:text-indigo-300 text-xs font-medium shrink-0 transition-colors">Copy</button>
+        <div class="bg-t3 border border-tb rounded p-2.5 flex items-center gap-2 mb-2">
+          <input id="extPathInput" readonly class="path-input flex-1 bg-transparent text-g font-mono text-[10px] outline-none truncate" value="loading…">
+          <button id="copyPathBtn" class="text-m hover:text-mb text-[10px] font-medium shrink-0 transition-colors tracking-wide">COPY</button>
         </div>
-        <button id="openFolderStep3" class="w-full bg-zinc-800 hover:bg-zinc-700 text-zinc-400 text-xs font-medium py-2 rounded-xl mb-3 transition-colors">📂 Open folder in Explorer instead</button>
-        <button id="step3Next" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs py-2.5 rounded-xl transition-colors">Extension loaded →</button>
+        <button id="openFolderStep3" class="w-full border border-tb hover:border-tb2 text-gd hover:text-g text-[10px] font-medium py-1.5 rounded mb-3 transition-colors tracking-wide">[DIR] Open folder in Explorer</button>
+        <button id="step3Next" class="w-full border border-m text-m hover:bg-md/20 font-semibold text-[10px] py-2 rounded tracking-widest transition-colors">EXTENSION LOADED →</button>
       </div>
 
-      <!-- Step 4 -->
       <div class="step" id="step4">
         <div class="text-center py-2">
-          <div class="text-4xl mb-3">🎉</div>
-          <div class="text-zinc-200 font-bold text-sm mb-2">Extension installed!</div>
-          <p class="text-zinc-500 text-xs leading-relaxed mb-5">
-            The extension is now active. It enables filtering on
-            <span class="text-zinc-200 font-medium">X.com, LinkedIn, Instagram</span>
-            and every other site — and unlocks
-            <span class="text-violet-400 font-medium">AI Image Detection</span>
-            in the dashboard.
+          <div class="text-[36px] mb-3" style="color:#6db88a; text-shadow:0 0 14px rgba(109,184,138,0.4)">◈</div>
+          <div class="text-gb font-bold text-[13px] mb-2 tracking-widest">EXTENSION INSTALLED</div>
+          <p class="text-g text-[10px] leading-relaxed mb-5">
+            The extension is now active. Enables filtering on
+            <span class="text-g font-medium">X.com, LinkedIn, Instagram</span>
+            and every site — and unlocks
+            <span class="text-cv font-medium">AI Image Detection</span>.
           </p>
-          <button id="step4Done" class="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs py-2.5 rounded-xl transition-colors">Done</button>
+          <button id="step4Done" class="w-full border border-g text-g hover:bg-gg font-semibold text-[10px] py-2 rounded tracking-widest transition-colors">DONE</button>
         </div>
       </div>
-
     </div>
   </div>
 
-  <!-- About Modal -->
+  <!-- ── About Modal ────────────────────────────────────────────────── -->
   <div id="aboutModal">
-    <div class="bg-zinc-900 border border-zinc-700 rounded-3xl p-6 w-[420px] mx-4 shadow-2xl">
-      <div class="flex items-center justify-between mb-5">
-        <div class="font-bold text-sm">About AI Slop Filter</div>
-        <button id="aboutModalClose" class="text-zinc-600 hover:text-zinc-300 text-lg leading-none transition-colors">✕</button>
+    <div class="modal-panel p-5 w-[400px] mx-4 shadow-2xl">
+      <div class="flex items-center justify-between mb-4">
+        <div class="font-bold text-gb tracking-widest text-[11px]">ABOUT SLOPPROX</div>
+        <button id="aboutModalClose" class="text-gd hover:text-g text-[13px] leading-none transition-colors border border-tb hover:border-tb2 w-6 h-6 flex items-center justify-center rounded">✕</button>
       </div>
-      <div class="space-y-4 text-xs text-zinc-400 leading-relaxed overflow-y-auto max-h-[70vh] pr-1">
+      <div class="space-y-3.5 text-[10px] text-g leading-relaxed overflow-y-auto max-h-[70vh] pr-1">
         <div class="text-center py-1">
-          <div class="text-3xl mb-3">🛡️</div>
-          <div class="text-zinc-100 font-bold text-base mb-2">Keep the internet human.</div>
-          <p class="text-zinc-500 leading-relaxed">
-            We built AI Slop Filter because we believe the web is better when it's made by real people —
-            with their quirks, mistakes, and genuine perspectives. AI-generated content at scale dilutes
-            what makes the internet worth visiting.
-          </p>
+          <div class="text-[28px] mb-2" style="color:#6db88a; text-shadow:0 0 12px rgba(109,184,138,0.35)"><span style="color:#b84fa0;text-shadow:0 0 10px rgba(184,79,160,0.4)">&gt;</span>_</div>
+          <div class="text-gb font-bold text-[13px] mb-2 tracking-wide">Keep the internet human.</div>
+          <p class="leading-relaxed">We built SlopProx because the web is better when it's made by real people — with their quirks, mistakes, and genuine perspectives.</p>
         </div>
-        <div class="border-t border-zinc-800"></div>
+        <div class="term-rule"></div>
         <div>
-          <div class="text-zinc-500 font-semibold text-[10px] mb-2.5 tracking-widest uppercase">What it does</div>
-          <div class="space-y-2">
-            <div class="flex gap-2.5 items-start"><span class="text-emerald-400 shrink-0 mt-px">✦</span><span>Detects and hides AI-generated text in articles, feeds, and social media</span></div>
-            <div class="flex gap-2.5 items-start"><span class="text-violet-400 shrink-0 mt-px">✦</span><span>Identifies AI-generated images using a 3-model on-device ensemble</span></div>
-            <div class="flex gap-2.5 items-start"><span class="text-red-400 shrink-0 mt-px">✦</span><span>Flags YouTube videos where the creator declared AI-generated content</span></div>
-            <div class="flex gap-2.5 items-start"><span class="text-amber-400 shrink-0 mt-px">✦</span><span>Blocks ads and trackers at the network level via a local proxy</span></div>
-            <div class="flex gap-2.5 items-start"><span class="text-blue-400 shrink-0 mt-px">✦</span><span>Runs entirely on your device — no cloud, no tracking, no subscriptions</span></div>
+          <div class="text-gb font-semibold text-[9px] mb-2 tracking-widest uppercase">What it does</div>
+          <div class="space-y-1.5">
+            <div class="flex gap-2 items-start"><span class="text-g shrink-0">◈</span><span>Detects and hides AI-generated text in articles, feeds, and social media</span></div>
+            <div class="flex gap-2 items-start"><span class="text-cv shrink-0">◈</span><span>Identifies AI-generated images using a 3-model on-device ensemble</span></div>
+            <div class="flex gap-2 items-start"><span class="text-cr shrink-0">◈</span><span>Flags YouTube videos where the creator declared AI-generated content</span></div>
+            <div class="flex gap-2 items-start"><span class="text-ca shrink-0">◈</span><span>Blocks ads and trackers at the network level via a local proxy</span></div>
+            <div class="flex gap-2 items-start"><span class="text-mb shrink-0">◈</span><span>Runs entirely on your device — no cloud, no tracking, no subscriptions</span></div>
           </div>
         </div>
-        <div class="border-t border-zinc-800"></div>
+        <div class="term-rule"></div>
         <div>
-          <div class="text-zinc-500 font-semibold text-[10px] mb-2.5 tracking-widest uppercase">How it works</div>
-          <p class="text-zinc-500 leading-relaxed">
-            A local HTTPS proxy intercepts browser traffic and runs on-device AI models to detect and hide AI content.
-            A companion browser extension extends this to social media feeds (X, Reddit, Instagram, LinkedIn)
-            that need card-level access. All inference stays on your machine — nothing is sent anywhere.
-          </p>
+          <div class="text-gb font-semibold text-[9px] mb-2 tracking-widest uppercase">How it works</div>
+          <p class="leading-relaxed">A local HTTPS proxy intercepts browser traffic and runs on-device AI models to detect and hide AI content. A companion extension extends this to social feeds. All inference stays on your machine.</p>
         </div>
-        <div class="text-zinc-700 text-center text-[10px]">AI Slop Filter v<span id="currentVersion">1.9.0</span> · Local-only · No accounts · No telemetry</div>
+        <div class="text-gd text-center text-[9px] tracking-wide">SlopProx v<span id="currentVersion">—</span> · Local-only · No accounts · No telemetry</div>
       </div>
-
     </div>
   </div>
 
-  <!-- Privacy Modal -->
+  <!-- ── Privacy Modal ──────────────────────────────────────────────── -->
   <div id="privacyModal">
-    <div class="bg-zinc-900 border border-zinc-700 rounded-3xl p-6 w-[420px] mx-4 shadow-2xl">
-      <div class="flex items-center justify-between mb-5">
-        <div class="font-bold text-sm">Privacy Policy</div>
-        <button id="privacyModalClose" class="text-zinc-600 hover:text-zinc-300 text-lg leading-none transition-colors">✕</button>
+    <div class="modal-panel p-5 w-[400px] mx-4 shadow-2xl">
+      <div class="flex items-center justify-between mb-4">
+        <div class="font-bold text-gb tracking-widest text-[11px]">PRIVACY POLICY</div>
+        <button id="privacyModalClose" class="text-gd hover:text-g text-[13px] border border-tb hover:border-tb2 w-6 h-6 flex items-center justify-center rounded transition-colors">✕</button>
       </div>
-      <div class="space-y-4 text-xs text-zinc-400 leading-relaxed overflow-y-auto max-h-[70vh] pr-1">
-        <div class="bg-emerald-900/20 border border-emerald-800/40 rounded-xl p-3 text-emerald-400 text-[11px] font-semibold text-center">
-          We collect nothing. Ever.
-        </div>
-        <div>
-          <div class="text-zinc-500 font-semibold text-[10px] mb-2.5 tracking-widest uppercase">What we process</div>
-          <p class="text-zinc-500 leading-relaxed">
-            Text content and images from pages you visit are analysed locally by on-device machine learning models.
-            This analysis happens entirely on your computer — the results are never transmitted anywhere.
-          </p>
-        </div>
-        <div class="border-t border-zinc-800"></div>
-        <div>
-          <div class="text-zinc-500 font-semibold text-[10px] mb-2.5 tracking-widest uppercase">What we don't do</div>
-          <div class="space-y-2">
-            <div class="flex gap-2.5 items-start"><span class="text-red-500 shrink-0">✕</span><span>Collect or store your browsing data</span></div>
-            <div class="flex gap-2.5 items-start"><span class="text-red-500 shrink-0">✕</span><span>Track which sites you visit</span></div>
-            <div class="flex gap-2.5 items-start"><span class="text-red-500 shrink-0">✕</span><span>Send telemetry or analytics anywhere</span></div>
-            <div class="flex gap-2.5 items-start"><span class="text-red-500 shrink-0">✕</span><span>Operate any servers or cloud infrastructure</span></div>
-            <div class="flex gap-2.5 items-start"><span class="text-red-500 shrink-0">✕</span><span>Sell or share your data with anyone</span></div>
-          </div>
-        </div>
-        <div class="border-t border-zinc-800"></div>
-        <div>
-          <div class="text-zinc-500 font-semibold text-[10px] mb-2.5 tracking-widest uppercase">The local proxy</div>
-          <p class="text-zinc-500 leading-relaxed">
-            To filter content on HTTPS pages, AI Slop Filter installs a local Certificate Authority (CA) on your
-            device and runs a local HTTPS proxy on port 8081. This allows the app to read and modify page content
-            before it reaches your browser. This interception is entirely local — no traffic is routed through
-            any external server.
-          </p>
-        </div>
-        <div class="border-t border-zinc-800"></div>
-        <div>
-          <div class="text-zinc-500 font-semibold text-[10px] mb-2.5 tracking-widest uppercase">The browser extension</div>
-          <p class="text-zinc-500 leading-relaxed">
-            The companion extension communicates only with the local app at 127.0.0.1:8083.
-            It never contacts any external URL and requests no remote permissions.
-          </p>
-        </div>
-        <div class="text-zinc-700 text-center text-[10px] pt-1">Last updated April 2026</div>
+      <div class="space-y-3.5 text-[10px] text-g leading-relaxed overflow-y-auto max-h-[70vh] pr-1">
+        <div class="border border-tb2 bg-gg rounded p-2.5 text-g text-[10px] font-semibold text-center tracking-wide">WE COLLECT NOTHING. EVER.</div>
+        <div><div class="text-gb font-semibold text-[9px] mb-2 tracking-widest uppercase">What we process</div>
+        <p>Text and images from pages you visit are analysed locally by on-device ML models. This never leaves your machine.</p></div>
+        <div class="term-rule"></div>
+        <div><div class="text-gb font-semibold text-[9px] mb-2 tracking-widest uppercase">What we don't do</div>
+        <div class="space-y-1.5">
+          <div class="flex gap-2 items-start"><span class="text-cr shrink-0">✕</span><span>Collect or store your browsing data</span></div>
+          <div class="flex gap-2 items-start"><span class="text-cr shrink-0">✕</span><span>Track which sites you visit</span></div>
+          <div class="flex gap-2 items-start"><span class="text-cr shrink-0">✕</span><span>Send telemetry or analytics anywhere</span></div>
+          <div class="flex gap-2 items-start"><span class="text-cr shrink-0">✕</span><span>Operate any servers or cloud infrastructure</span></div>
+          <div class="flex gap-2 items-start"><span class="text-cr shrink-0">✕</span><span>Sell or share your data with anyone</span></div>
+        </div></div>
+        <div class="term-rule"></div>
+        <div><div class="text-gb font-semibold text-[9px] mb-2 tracking-widest uppercase">The local proxy</div>
+        <p>SlopProx installs a local CA and runs a local HTTPS proxy on port 8081. All interception is entirely local — no traffic is routed through any external server.</p></div>
+        <div class="term-rule"></div>
+        <div><div class="text-gb font-semibold text-[9px] mb-2 tracking-widest uppercase">The browser extension</div>
+        <p>The companion extension communicates only with the local app at 127.0.0.1:8083. It never contacts any external URL.</p></div>
+        <div class="text-gd text-center text-[9px] tracking-wide">Last updated April 2026</div>
       </div>
-
     </div>
   </div>
 
-  <!-- Terms & Attribution Modal -->
+  <!-- ── Terms Modal ────────────────────────────────────────────────── -->
   <div id="termsModal">
-    <div class="bg-zinc-900 border border-zinc-700 rounded-3xl p-6 w-[420px] mx-4 shadow-2xl">
-      <div class="flex items-center justify-between mb-5">
-        <div class="font-bold text-sm">Terms &amp; Attribution</div>
-        <button id="termsModalClose" class="text-zinc-600 hover:text-zinc-300 text-lg leading-none transition-colors">✕</button>
+    <div class="modal-panel p-5 w-[400px] mx-4 shadow-2xl">
+      <div class="flex items-center justify-between mb-4">
+        <div class="font-bold text-gb tracking-widest text-[11px]">TERMS &amp; ATTRIBUTION</div>
+        <button id="termsModalClose" class="text-gd hover:text-g text-[13px] border border-tb hover:border-tb2 w-6 h-6 flex items-center justify-center rounded transition-colors">✕</button>
       </div>
-      <div class="space-y-4 text-xs text-zinc-400 leading-relaxed overflow-y-auto max-h-[70vh] pr-1">
+      <div class="space-y-3.5 text-[10px] text-g leading-relaxed overflow-y-auto max-h-[70vh] pr-1">
+        <div><div class="text-gb font-semibold text-[9px] mb-2 tracking-widest uppercase">Terms of use</div>
+        <p>SlopProx is provided as-is for personal, non-commercial use. The app modifies your system proxy settings and installs a local CA certificate. Uninstalling restores your original proxy settings.</p></div>
+        <div class="term-rule"></div>
         <div>
-          <div class="text-zinc-500 font-semibold text-[10px] mb-2.5 tracking-widest uppercase">Terms of use</div>
-          <p class="text-zinc-500 leading-relaxed">
-            AI Slop Filter is provided as-is for personal, non-commercial use. The app modifies your system
-            proxy settings and installs a local CA certificate to enable HTTPS filtering. Uninstalling the app
-            restores your original proxy settings. We are not responsible for compatibility issues with specific
-            websites or applications that may result from the proxy configuration.
-          </p>
-        </div>
-        <div class="border-t border-zinc-800"></div>
-        <div>
-          <div class="text-zinc-500 font-semibold text-[10px] mb-3 tracking-widest uppercase">Open-source models</div>
-          <div class="space-y-2.5">
-            <div class="bg-zinc-800 rounded-xl p-3">
-              <div class="text-zinc-300 font-medium text-[11px] mb-0.5">Text detection</div>
-              <div class="text-indigo-400 font-mono text-[10px] mb-1.5 cursor-pointer hover:text-indigo-300" id="textModelLink">onnx-community/tmr-ai-text-detector</div>
-              <div class="text-zinc-600 text-[10px]">Apache 2.0</div>
+          <div class="text-gb font-semibold text-[9px] mb-3 tracking-widest uppercase">Open-source models</div>
+          <div class="space-y-2">
+            <div class="bg-t3 border border-tb rounded p-2.5">
+              <div class="text-gb font-medium text-[10px] mb-0.5">Text detection</div>
+              <div class="text-m font-mono text-[9.5px] mb-1">onnx-community/tmr-ai-text-detector</div>
+              <div class="text-g text-[9px]">Apache 2.0</div>
             </div>
-            <div class="bg-zinc-800 rounded-xl p-3">
-              <div class="text-zinc-300 font-medium text-[11px] mb-0.5">Image detection — Model A</div>
-              <div class="text-indigo-400 font-mono text-[10px] mb-1.5 cursor-pointer hover:text-indigo-300" id="imgModelALink">yaya36095/ai-source-detector</div>
-              <div class="text-zinc-600 text-[10px]">CC-BY 4.0 · Multi-label ViT-Base classifier</div>
+            <div class="bg-t3 border border-tb rounded p-2.5">
+              <div class="text-gb font-medium text-[10px] mb-0.5">Image detection — Model A</div>
+              <div class="text-m font-mono text-[9.5px] mb-1">yaya36095/ai-source-detector</div>
+              <div class="text-g text-[9px]">CC-BY 4.0 · Multi-label ViT-Base classifier</div>
             </div>
-            <div class="bg-zinc-800 rounded-xl p-3">
-              <div class="text-zinc-300 font-medium text-[11px] mb-0.5">Image detection — Model B</div>
-              <div class="text-indigo-400 font-mono text-[10px] mb-1.5 cursor-pointer hover:text-indigo-300" id="imgModelBLink">onnx-community/SMOGY-Ai-images-detector-ONNX</div>
-              <div class="text-zinc-600 text-[10px]">Apache 2.0 · Swin Transformer, fine-tuned from Organika/sdxl-detector</div>
+            <div class="bg-t3 border border-tb rounded p-2.5">
+              <div class="text-gb font-medium text-[10px] mb-0.5">Image detection — Model B</div>
+              <div class="text-m font-mono text-[9.5px] mb-1">onnx-community/SMOGY-Ai-images-detector-ONNX</div>
+              <div class="text-g text-[9px]">Apache 2.0 · Swin Transformer</div>
             </div>
-            <div class="bg-zinc-800 rounded-xl p-3">
-              <div class="text-zinc-300 font-medium text-[11px] mb-0.5">Image detection — Model C</div>
-              <div class="text-indigo-400 font-mono text-[10px] mb-1.5 cursor-pointer hover:text-indigo-300" id="imgModelCLink">onnx-community/Deep-Fake-Detector-v2-Model-ONNX</div>
-              <div class="text-zinc-600 text-[10px]">Apache 2.0 · ViT-Base deepfake &amp; synthetic image detector</div>
+            <div class="bg-t3 border border-tb rounded p-2.5">
+              <div class="text-gb font-medium text-[10px] mb-0.5">Image detection — Model C</div>
+              <div class="text-m font-mono text-[9.5px] mb-1">onnx-community/Deep-Fake-Detector-v2-Model-ONNX</div>
+              <div class="text-g text-[9px]">Apache 2.0 · ViT-Base deepfake detector</div>
             </div>
           </div>
         </div>
-        <div class="border-t border-zinc-800"></div>
+        <div class="term-rule"></div>
         <div>
-          <div class="text-zinc-500 font-semibold text-[10px] mb-2.5 tracking-widest uppercase">Built with</div>
-          <div class="grid grid-cols-2 gap-1.5 text-[10px]">
-            <div class="flex justify-between bg-zinc-800 rounded-lg px-2.5 py-2">
-              <span class="text-zinc-300">Electron</span><span class="text-zinc-600">MIT</span>
-            </div>
-            <div class="flex justify-between bg-zinc-800 rounded-lg px-2.5 py-2">
-              <span class="text-zinc-300">mockttp</span><span class="text-zinc-600">Apache 2.0</span>
-            </div>
-            <div class="flex justify-between bg-zinc-800 rounded-lg px-2.5 py-2">
-              <span class="text-zinc-300">@hf/transformers</span><span class="text-zinc-600">Apache 2.0</span>
-            </div>
-            <div class="flex justify-between bg-zinc-800 rounded-lg px-2.5 py-2">
-              <span class="text-zinc-300">Tailwind CSS</span><span class="text-zinc-600">MIT</span>
-            </div>
+          <div class="text-gb font-semibold text-[9px] mb-2 tracking-widest uppercase">Built with</div>
+          <div class="grid grid-cols-2 gap-1.5 text-[9.5px]">
+            <div class="flex justify-between bg-t3 border border-tb rounded px-2.5 py-1.5"><span class="text-gb">Electron</span><span class="text-gd">MIT</span></div>
+            <div class="flex justify-between bg-t3 border border-tb rounded px-2.5 py-1.5"><span class="text-gb">mockttp</span><span class="text-gd">Apache 2.0</span></div>
+            <div class="flex justify-between bg-t3 border border-tb rounded px-2.5 py-1.5"><span class="text-gb">@hf/transformers</span><span class="text-gd">Apache 2.0</span></div>
+            <div class="flex justify-between bg-t3 border border-tb rounded px-2.5 py-1.5"><span class="text-gb">Tailwind CSS</span><span class="text-gd">MIT</span></div>
           </div>
         </div>
-      </div>
-
-    </div>
-  </div>
-
-  <!-- Bypass Manager Modal -->
-  <div id="bypassModal">
-    <div class="bg-zinc-900 border border-zinc-700 rounded-3xl p-6 w-[420px] mx-4 shadow-2xl flex flex-col" style="max-height:80vh">
-      <div class="flex items-center justify-between mb-1 shrink-0">
-        <div>
-          <div class="font-bold text-sm">Bypass Domains</div>
-          <div class="text-zinc-500 text-xs mt-0.5">These hosts connect directly, bypassing the proxy</div>
-        </div>
-        <button id="bypassModalClose" class="text-zinc-600 hover:text-zinc-300 text-lg leading-none transition-colors ml-4">✕</button>
-      </div>
-
-      <!-- Manual add -->
-      <div class="flex gap-2 mt-4 mb-3 shrink-0">
-        <input id="bypassAddInput" type="text" placeholder="e.g. app.example.com"
-               class="flex-1 bg-zinc-800 border border-zinc-700 rounded-xl px-3 py-2 text-xs text-zinc-200 placeholder-zinc-600 outline-none focus:border-zinc-500" />
-        <button id="bypassAddBtn"
-                class="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold px-4 py-2 rounded-xl transition-colors shrink-0">
-          Add
-        </button>
-      </div>
-
-      <!-- Domain list -->
-      <div class="flex-1 overflow-y-auto -mx-1 px-1">
-        <div id="bypassModalList" class="flex flex-col gap-1.5">
-          <div class="text-zinc-600 text-xs text-center py-6">No bypass domains added yet.<br>They appear here when you add one.</div>
-        </div>
-      </div>
-
-      <div class="text-zinc-700 text-[10px] leading-relaxed mt-4 shrink-0">
-        <span class="text-zinc-500 font-medium">How it works:</span> When an app rejects the proxy certificate, SlopProx detects it and prompts you to add the host here. That host then connects directly — no MITM, no filtering.
       </div>
     </div>
   </div>
 
-  <!-- Settings Modal -->
+  <!-- ── Settings Modal ─────────────────────────────────────────────── -->
   <div id="settingsModal">
-    <div class="bg-zinc-900 border border-zinc-800 rounded-3xl p-5 w-[340px] mx-4 shadow-2xl">
-      <div class="flex items-center justify-between mb-5">
-        <div class="flex items-center gap-2.5">
-          <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none"
-               stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-zinc-400">
+    <div class="modal-panel p-5 w-[320px] mx-4 shadow-2xl">
+      <div class="flex items-center justify-between mb-4">
+        <div class="flex items-center gap-2">
+          <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none"
+               stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-gd">
             <circle cx="12" cy="12" r="3"/>
             <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33
                      1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33
@@ -600,56 +731,75 @@
                      1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9
                      a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
           </svg>
-          <span class="font-semibold text-sm">Settings</span>
+          <span class="font-bold text-gb tracking-widest text-[11px]">SETTINGS</span>
         </div>
-        <button id="settingsModalClose" class="w-7 h-7 hover:bg-zinc-800 rounded-lg flex items-center justify-center text-zinc-500 hover:text-zinc-300 text-xs transition-colors">✕</button>
+        <button id="settingsModalClose" class="text-gd hover:text-g border border-tb hover:border-tb2 w-6 h-6 flex items-center justify-center rounded transition-colors text-[13px]">✕</button>
       </div>
 
       <div class="mb-4">
-        <div class="text-zinc-500 text-[10px] font-semibold tracking-widest uppercase mb-2">System</div>
+        <div class="text-gb text-[9px] font-semibold tracking-widest uppercase mb-2">System</div>
         <div class="space-y-1">
-          <div class="flex items-center justify-between bg-zinc-800 rounded-xl px-3.5 py-2.5 select-none">
-            <div>
-              <div class="text-sm font-medium text-zinc-200">Launch at Windows startup</div>
-            </div>
+          <div class="flex items-center justify-between bg-t3 border border-tb rounded px-3 py-2.5 select-none">
+            <div class="text-[11px] text-gb">Launch at Windows startup</div>
             <div id="stgLaunchTrack" class="toggle-track"><div class="toggle-thumb"></div></div>
           </div>
-          <div class="flex items-center justify-between bg-zinc-800 rounded-xl px-3.5 py-2.5 select-none">
+          <div class="flex items-center justify-between bg-t3 border border-tb rounded px-3 py-2.5 select-none">
             <div>
-              <div class="text-sm font-medium text-zinc-200">Close to tray</div>
-              <div class="text-zinc-500 text-[10px] mt-0.5">Takes effect immediately</div>
+              <div class="text-[11px] text-gb">Close to tray</div>
+              <div class="text-g text-[9px] mt-0.5 tracking-wide">Takes effect immediately</div>
             </div>
             <div id="stgTrayTrack" class="toggle-track"><div class="toggle-thumb"></div></div>
           </div>
           <button id="checkUpdatesBtn"
-                  class="w-full bg-zinc-800 hover:bg-zinc-700 transition-colors text-zinc-300
-                         text-sm font-medium py-2.5 rounded-xl border border-zinc-700">
-            Check for Updates
+                  class="w-full border border-tb hover:border-tb2 transition-colors text-gd hover:text-g
+                         text-[10px] font-medium py-2 rounded tracking-widest">
+            CHECK FOR UPDATES
+          </button>
+        </div>
+      </div>
+
+      <div class="mb-4">
+        <div class="text-gb text-[9px] font-semibold tracking-widest uppercase mb-2">Maintenance</div>
+        <div class="flex gap-1.5">
+          <button id="resetBtn"
+                  class="flex-1 border border-tb hover:border-tb2 transition-colors text-gd hover:text-g
+                         text-[10px] font-medium py-2 rounded tracking-widest">
+            RESET
+          </button>
+          <button id="certBtn"
+                  class="flex-1 border border-tb hover:border-tb2 transition-colors text-gd hover:text-g
+                         text-[10px] font-medium py-2 rounded tracking-widest">
+            CERT
+          </button>
+          <button id="debugLogBtn"
+                  class="flex-1 border border-tb hover:border-tb2 transition-colors text-gd hover:text-g
+                         text-[10px] font-medium py-2 rounded tracking-widest">
+            LOG
           </button>
         </div>
       </div>
 
       <div>
-        <div class="text-zinc-500 text-[10px] font-semibold tracking-widest uppercase mb-0.5">Startup defaults</div>
-        <div class="text-zinc-600 text-[10px] mb-2">Feature state when the app launches</div>
+        <div class="text-gb text-[9px] font-semibold tracking-widest uppercase mb-0.5">Startup defaults</div>
+        <div class="text-g text-[9px] mb-2 tracking-wide">Feature state when the app launches</div>
         <div class="space-y-1">
-          <div class="flex items-center justify-between bg-zinc-800 rounded-xl px-3.5 py-2.5 select-none">
-            <div class="text-sm font-medium text-zinc-200">Text filter</div>
+          <div class="flex items-center justify-between bg-t3 border border-tb rounded px-3 py-2.5 select-none">
+            <div class="text-[11px] text-gb">Text filter</div>
             <div id="stgTextTrack" class="toggle-track"><div class="toggle-thumb"></div></div>
           </div>
-          <div class="flex items-center justify-between bg-zinc-800 rounded-xl px-3.5 py-2.5 select-none">
-            <div class="text-sm font-medium text-zinc-200">Ad blocker</div>
+          <div class="flex items-center justify-between bg-t3 border border-tb rounded px-3 py-2.5 select-none">
+            <div class="text-[11px] text-gb">Ad blocker</div>
             <div id="stgAdTrack" class="toggle-track"><div class="toggle-thumb"></div></div>
           </div>
-          <div class="bg-zinc-800 rounded-xl px-3.5 py-2.5 select-none">
+          <div class="bg-t3 border border-tb rounded px-3 py-2.5 select-none">
             <div class="flex items-center justify-between">
-              <div class="text-sm font-medium text-zinc-200">Image detection</div>
+              <div class="text-[11px] text-gb">Image detection</div>
               <div id="stgImageTrack" class="toggle-track"><div class="toggle-thumb"></div></div>
             </div>
-            <div id="stgImageNote" class="hidden text-amber-500/80 text-[10px] mt-1.5 leading-relaxed"></div>
+            <div id="stgImageNote" class="hidden text-m text-[9px] mt-1.5 leading-relaxed tracking-wide"></div>
           </div>
-          <div class="flex items-center justify-between bg-zinc-800 rounded-xl px-3.5 py-2.5 select-none">
-            <div class="text-sm font-medium text-zinc-200">YouTube filter</div>
+          <div class="flex items-center justify-between bg-t3 border border-tb rounded px-3 py-2.5 select-none">
+            <div class="text-[11px] text-gb">YouTube filter</div>
             <div id="stgYtTrack" class="toggle-track"><div class="toggle-thumb"></div></div>
           </div>
         </div>
@@ -685,15 +835,15 @@
   window.uiSound = function(type = 'tap') {
     try {
       switch (type) {
-        case 'tap': blip({ freq: 700, duration: 0.08 }); break;
+        case 'tap':     blip({ freq: 700, duration: 0.08 }); break;
         case 'confirm': blip({ freq: 600, glide: 80, duration: 0.12 }); break;
         case 'success': blip({ freq: 700, duration: 0.09 }); setTimeout(() => blip({ freq: 900, duration: 0.11 }), 40); break;
-        case 'error': blip({ freq: 500, glide: -120, type: 'sawtooth', filterFreq: 1200, duration: 0.14 }); break;
+        case 'error':   blip({ freq: 500, glide: -120, type: 'sawtooth', filterFreq: 1200, duration: 0.14 }); break;
         case 'warning': blip({ freq: 650, vibrato: 0.4, duration: 0.16, filterFreq: 1400 }); break;
-        case 'hover': blip({ freq: 900, duration: 0.05, volume: 0.08, filterFreq: 2500 }); break;
-        case 'back': blip({ freq: 700, glide: -90, duration: 0.1 }); break;
-        case 'data': blip({ freq: 800, duration: 0.06 }); setTimeout(() => blip({ freq: 820, duration: 0.06 }), 25); break;
-        case 'unlock': blip({ freq: 600, duration: 0.08 }); setTimeout(() => blip({ freq: 800, duration: 0.1 }), 30); setTimeout(() => blip({ freq: 1000, duration: 0.12 }), 70); break;
+        case 'hover':   blip({ freq: 900, duration: 0.05, volume: 0.08, filterFreq: 2500 }); break;
+        case 'back':    blip({ freq: 700, glide: -90, duration: 0.1 }); break;
+        case 'data':    blip({ freq: 800, duration: 0.06 }); setTimeout(() => blip({ freq: 820, duration: 0.06 }), 25); break;
+        case 'unlock':  blip({ freq: 600, duration: 0.08 }); setTimeout(() => blip({ freq: 800, duration: 0.1 }), 30); setTimeout(() => blip({ freq: 1000, duration: 0.12 }), 70); break;
         case 'alert':
           blip({ freq: 880, type: 'square', duration: 0.14, volume: 0.32, filterFreq: 3000 });
           setTimeout(() => blip({ freq: 660, type: 'square', duration: 0.14, volume: 0.32, filterFreq: 3000 }), 160);
@@ -708,11 +858,12 @@
 window.addEventListener('load', () => {
   const api = window.electronAPI;
   let extensionInstalled = false;
+  let proxyEnabled = false;
   let recentlyShown = new Set();
   let detectedExtUrl = 'chrome://extensions';
   let _checkingUpdates = false;
 
-  // ── Startup overlay ───────────────────────────────────────────────────────
+  // ── Startup overlay ───────────────────────────────────────────────
   const overlay        = document.getElementById('initOverlay');
   const overlayTitle   = document.getElementById('overlayTitle');
   const overlayStatus  = document.getElementById('overlayStatus');
@@ -720,7 +871,6 @@ window.addEventListener('load', () => {
   const overlayRetry   = document.getElementById('overlayRetry');
   let overlayDismissed = false;
 
-  // Update version display
   api.invoke('get-version').then(version => {
     document.getElementById('currentVersion').textContent = version;
   });
@@ -732,31 +882,103 @@ window.addEventListener('load', () => {
     setTimeout(() => overlay.remove(), 300);
   }
 
-  // Counter updates from main process
+  // ── Tab system ────────────────────────────────────────────────────
+  const tabBtns   = document.querySelectorAll('.tab-btn');
+  const tabPanels = document.querySelectorAll('.tab-panel');
+
+  function switchTab(tabId) {
+    tabBtns.forEach(b => b.classList.toggle('active', b.dataset.tab === tabId));
+    tabPanels.forEach(p => p.classList.toggle('active', p.id === `tab-${tabId}`));
+  }
+
+  tabBtns.forEach(btn => {
+    btn.addEventListener('click', () => { uiSound('tap'); switchTab(btn.dataset.tab); });
+  });
+
+  // ── Classification log ────────────────────────────────────────────
+  const logArea    = document.getElementById('logArea');
+  const logEmpty   = document.getElementById('logEmpty');
+  let logCount     = 0;
+  const LOG_MAX    = 150;
+
+  const TYPE_META = {
+    text:    { label: 'TXT', blockedBar: '#b84fa0', passedBar: '#2a4d2e', blockedColor: 'color:#b84fa0', passedColor: 'color:#3d7044' },
+    ad:      { label: 'AD',  blockedBar: '#d4a044', passedBar: '#2a4d2e', blockedColor: 'color:#d4a044', passedColor: 'color:#3d7044' },
+    image:   { label: 'IMG', blockedBar: '#9d86e0', passedBar: '#2a4d2e', blockedColor: 'color:#9d86e0', passedColor: 'color:#3d7044' },
+    youtube: { label: 'YT',  blockedBar: '#c06060', passedBar: '#2a4d2e', blockedColor: 'color:#c06060', passedColor: 'color:#3d7044' },
+  };
+
+  function fmtTime(ts) {
+    const d = new Date(ts);
+    return [d.getHours(), d.getMinutes(), d.getSeconds()].map(n => String(n).padStart(2, '0')).join(':');
+  }
+
+  function addLogEntry({ ts, type, outcome, target, confidence }) {
+    if (logEmpty && logEmpty.parentNode) logEmpty.remove();
+
+    const meta      = TYPE_META[type] || TYPE_META.text;
+    const isBlocked = outcome === 'blocked';
+    const typeColor = isBlocked ? meta.blockedColor : meta.passedColor;
+    const barColor  = isBlocked ? meta.blockedBar   : '#2a4d2e';
+    const confVal   = confidence != null ? confidence : (isBlocked ? 100 : 0);
+    const confPct   = `${confVal}%`;
+    const targetStr = (target || '').slice(0, 30);
+    const outcomeColor = isBlocked ? meta.blockedColor : 'color:#2a4d2e';
+    const outcomeText  = isBlocked ? 'BLOCKED' : 'passed';
+
+    const row = document.createElement('div');
+    row.className = 'log-entry flex items-center gap-0 border-b border-[#0d1610] hover:bg-[#060d07]';
+    row.style.cssText = 'padding:3px 10px;font-size:10.5px;font-family:inherit';
+    row.innerHTML =
+      `<span style="color:#2a4d2e;flex-shrink:0;margin-right:6px;font-size:10px">[${fmtTime(ts)}]</span>` +
+      `<span style="${typeColor};font-weight:700;width:28px;flex-shrink:0;margin-right:8px">${meta.label}</span>` +
+      `<div style="width:48px;flex-shrink:0;margin-right:5px;display:flex;align-items:center;gap:3px">` +
+        `<div style="flex:1;height:2px;background:#111d13;border-radius:1px;overflow:hidden">` +
+          `<div style="height:100%;width:${confVal}%;background:${barColor};transition:width 0.3s"></div>` +
+        `</div>` +
+        `<span style="color:#3d7044;font-size:9px;width:22px;text-align:right;flex-shrink:0">${confPct}</span>` +
+      `</div>` +
+      `<span style="color:#6db88a;flex:1;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;margin-right:8px">${targetStr}</span>` +
+      `<span style="${outcomeColor};font-weight:700;flex-shrink:0;font-size:9.5px;letter-spacing:0.08em">${outcomeText}</span>`;
+
+    logArea.insertBefore(row, logArea.firstChild);
+    logCount++;
+
+    if (logCount > LOG_MAX) {
+      const last = logArea.lastChild;
+      if (last && last !== logEmpty) { logArea.removeChild(last); logCount--; }
+    }
+  }
+
+  api.on('classification-entry', entry => addLogEntry(entry));
+
+  document.getElementById('clearLogBtn').addEventListener('click', () => {
+    uiSound('back');
+    logArea.innerHTML = '';
+    logCount = 0;
+    logArea.appendChild(logEmpty);
+  });
+
+  // ── Counter animations ────────────────────────────────────────────
   function animateCounter(id, value) {
     const el = document.getElementById(id);
     if (!el) return;
     el.textContent = value.toLocaleString();
     el.classList.remove('counter-bump');
-    void el.offsetWidth; // reflow
+    void el.offsetWidth;
     el.classList.add('counter-bump');
   }
 
-  // Time saved calculation (conservative Brave-style: 5s/text, 50ms/ad, 1s/image, 30s/video)
+  // ── Time saved ────────────────────────────────────────────────────
   let _savedText = 0, _savedAds = 0, _savedImages = 0, _savedVideos = 0;
   function updateTimeSaved() {
     const totalSeconds = (_savedText * 5) + (_savedAds * 0.05) + (_savedImages * 1) + (_savedVideos * 30);
     const el = document.getElementById('time-saved-value');
     if (!el) return;
-    if (totalSeconds < 60) {
-      el.textContent = `${Math.round(totalSeconds)}s`;
-    } else if (totalSeconds < 3600) {
-      el.textContent = `${Math.round(totalSeconds / 60)}m`;
-    } else if (totalSeconds < 86400) {
-      el.textContent = `${Math.round(totalSeconds / 3600)}h`;
-    } else {
-      el.textContent = `${Math.round(totalSeconds / 86400)}d`;
-    }
+    if      (totalSeconds < 60)    el.textContent = `${Math.round(totalSeconds)}s`;
+    else if (totalSeconds < 3600)  el.textContent = `${Math.round(totalSeconds / 60)}m`;
+    else if (totalSeconds < 86400) el.textContent = `${Math.round(totalSeconds / 3600)}h`;
+    else                           el.textContent = `${Math.round(totalSeconds / 86400)}d`;
   }
 
   api.on('filter-count',  v => { animateCounter('slop-counter', v); _savedText = v; updateTimeSaved(); });
@@ -769,7 +991,7 @@ window.addEventListener('load', () => {
     document.getElementById('statusText').textContent = msg;
     if (!overlayDismissed) overlayStatus.textContent = msg;
     const isError = /fail|error/i.test(msg);
-    dot.className = `w-1.5 h-1.5 rounded-full shrink-0 ${isError ? 'bg-red-400' : 'bg-emerald-400'}`;
+    dot.className = `w-1.5 h-1.5 rounded-full shrink-0 ${isError ? 'bg-red-400' : 'bg-g status-dot-live'}`;
   });
 
   api.on('cert-ready', ok => {
@@ -779,9 +1001,9 @@ window.addEventListener('load', () => {
     } else {
       uiSound('error');
       overlaySpinner.style.display = 'none';
-      overlayTitle.textContent = 'Certificate install failed';
+      overlayTitle.textContent = 'CERTIFICATE INSTALL FAILED';
       overlayTitle.classList.add('text-red-400');
-      overlayStatus.textContent = 'Click Retry or use the Reinstall Cert button.';
+      overlayStatus.textContent = 'Click Retry or use the CERT button in the Extension tab.';
       overlayRetry.classList.remove('hidden');
     }
   });
@@ -789,12 +1011,13 @@ window.addEventListener('load', () => {
   overlayRetry.addEventListener('click', () => {
     uiSound('confirm');
     overlaySpinner.style.display = '';
-    overlayTitle.textContent = 'Retrying…';
+    overlayTitle.textContent = 'RETRYING…';
     overlayTitle.classList.remove('text-red-400');
     overlayRetry.classList.add('hidden');
     api.send('reinstall-cert');
   });
 
+  // ── Toggles ───────────────────────────────────────────────────────
   function mkToggle(trackId, onSend, offSend) {
     const track = document.getElementById(trackId);
     track.addEventListener('click', () => {
@@ -816,57 +1039,90 @@ window.addEventListener('load', () => {
   const youtubeToggle = mkToggle('ytTrack',    'toggle-youtube-filter',  'toggle-youtube-filter');
   const proxyToggle   = mkToggle('proxyTrack', 'toggle-proxy',           'toggle-proxy');
 
+  function syncCardBorder(cardId, isOn) {
+    const card = document.getElementById(cardId);
+    if (!card) return;
+    card.classList.toggle('fc-on', isOn);
+  }
+
+  function _proxySubtitleText(on) {
+    return on
+      ? 'Intercepts all browser and app traffic · <span class="text-gd cursor-pointer hover:text-g underline decoration-dotted" id="goBypassLink">manage bypass</span>'
+      : 'Off — extension-only mode active';
+  }
+
+  function _mainSubtitleText(filterOn) {
+    if (!filterOn) return proxyEnabled ? 'AI text filtering paused · proxy still active' : 'AI text filtering paused';
+    if (proxyEnabled) return extensionInstalled ? 'Filtering AI text via proxy + extension' : 'Filtering AI text via proxy · add extension for social media';
+    return extensionInstalled ? 'Filtering AI text via extension' : 'Install extension to filter AI text';
+  }
+
+  function _adSubtitleText() {
+    return proxyEnabled ? 'Block intrusive ads system-wide via proxy' : 'Block intrusive ads via extension';
+  }
+
   api.on('proxy-status', v => {
+    proxyEnabled = v;
     proxyToggle.set(v);
-    document.getElementById('proxySubtitle').textContent = v
-      ? 'Intercepts browser traffic • Bypass list below'
-      : 'Proxy OFF — nothing is being filtered or blocked';
+    const card = document.getElementById('proxyCard');
+    if (card) card.classList.toggle('fc-on', v);
+    document.getElementById('proxySubtitle').innerHTML = _proxySubtitleText(v);
+    const newLink = document.getElementById('goBypassLink');
+    if (newLink) newLink.addEventListener('click', e => { e.stopPropagation(); uiSound('tap'); switchTab('bypass'); });
+    document.getElementById('mainSubtitle').textContent = _mainSubtitleText(mainToggle.isOn());
+    document.getElementById('adSubtitle').textContent = _adSubtitleText();
+
+    const bypassBtn = document.getElementById('bypassTabBtn');
+    if (bypassBtn) {
+      bypassBtn.classList.toggle('hidden', !v);
+      if (!v) {
+        const activePanel = document.querySelector('.tab-panel.active');
+        if (activePanel && activePanel.id === 'tab-bypass') switchTab('filters');
+      }
+    }
   });
 
-  // TLS bypass alert — centered, urgent, impossible to miss
+  // ── TLS bypass alert ──────────────────────────────────────────────
   api.on('suggest-bypass', ({ hostname, reason }) => {
     if (recentlyShown.has(hostname)) return;
     recentlyShown.add(hostname);
     setTimeout(() => recentlyShown.delete(hostname), 15000);
-
     uiSound('alert');
 
-    const overlay = document.createElement('div');
-    overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.75); z-index:9999; display:flex; align-items:center; justify-content:center;';
+    const ov = document.createElement('div');
+    ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.88);z-index:9999;display:flex;align-items:center;justify-content:center;font-family:JetBrains Mono,Cascadia Code,Consolas,monospace';
 
     const card = document.createElement('div');
-    card.style.cssText = 'background:#18181b; border:2px solid #ef4444; border-radius:20px; padding:24px; width:340px; box-shadow:0 0 40px rgba(239,68,68,0.3), 0 20px 40px rgba(0,0,0,0.6); animation:shake 0.4s ease;';
+    card.style.cssText = 'background:#0d1610;border:2px solid #b84fa0;border-radius:6px;padding:22px;width:330px;box-shadow:0 0 24px rgba(184,79,160,0.2),0 20px 40px rgba(0,0,0,0.8);animation:shake 0.4s ease';
     card.innerHTML = `
-      <style>@keyframes shake{0%,100%{transform:translateX(0)}20%{transform:translateX(-6px)}40%{transform:translateX(6px)}60%{transform:translateX(-4px)}80%{transform:translateX(4px)}}</style>
-      <div style="display:flex; align-items:center; gap:10px; margin-bottom:14px">
-        <span style="font-size:26px; line-height:1">🚨</span>
+      <style>@keyframes shake{0%,100%{transform:translateX(0)}20%{transform:translateX(-5px)}40%{transform:translateX(5px)}60%{transform:translateX(-3px)}80%{transform:translateX(3px)}}</style>
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+        <span style="font-size:11px;font-weight:700;padding:2px 7px;border:1px solid #b84fa0;color:#b84fa0;letter-spacing:0.1em;flex-shrink:0">!ERR</span>
         <div>
-          <div style="font-weight:700; font-size:15px; color:#fef2f2">App blocked by proxy</div>
-          <div style="font-size:11px; color:#a1a1aa; margin-top:1px">${reason}</div>
+          <div style="font-weight:700;font-size:12px;color:#9dd4b0;letter-spacing:0.05em">APP BLOCKED BY PROXY</div>
+          <div style="font-size:10px;color:#6db88a;margin-top:2px;letter-spacing:0.04em">${reason}</div>
         </div>
       </div>
-      <div style="background:#27272a; border:1px solid #3f3f46; border-radius:10px; padding:10px 14px; font-family:monospace; font-size:13px; color:#34d399; margin-bottom:16px; word-break:break-all">${hostname}</div>
-      <div style="font-size:11px; color:#71717a; margin-bottom:16px; line-height:1.5">
-        The proxy MITM certificate was rejected. Adding this host to the bypass list will let it connect directly, restoring normal behaviour.
+      <div style="background:#111d13;border:1px solid #2a4d2e;border-radius:4px;padding:8px 12px;font-family:monospace;font-size:12px;color:#9dd4b0;margin-bottom:14px;word-break:break-all">${hostname}</div>
+      <div style="font-size:10px;color:#6db88a;margin-bottom:14px;line-height:1.55;letter-spacing:0.03em">
+        The proxy MITM certificate was rejected. Adding this host to the bypass list lets it connect directly, restoring normal behaviour.
       </div>
-      <div style="display:flex; gap:8px">
-        <button id="_bypass-add" style="flex:1; background:#10b981; color:white; border:none; padding:10px; border-radius:10px; font-size:13px; font-weight:600; cursor:pointer">Add to Bypass</button>
-        <button id="_bypass-ignore" style="background:#27272a; color:#a1a1aa; border:1px solid #3f3f46; padding:10px 16px; border-radius:10px; font-size:13px; cursor:pointer">Ignore</button>
+      <div style="display:flex;gap:8px">
+        <button id="_bypass-add" style="flex:1;background:#0c2015;color:#9dd4b0;border:1px solid #3d7044;padding:8px;border-radius:4px;font-size:10px;font-weight:600;cursor:pointer;letter-spacing:0.1em;font-family:inherit">ADD TO BYPASS</button>
+        <button id="_bypass-ignore" style="background:#111d13;color:#6db88a;border:1px solid #2a4d2e;padding:8px 14px;border-radius:4px;font-size:10px;cursor:pointer;font-family:inherit;letter-spacing:0.06em">IGNORE</button>
       </div>
     `;
-
-    overlay.appendChild(card);
-    document.body.appendChild(overlay);
-
-    const dismiss = () => overlay.remove();
+    ov.appendChild(card);
+    document.body.appendChild(ov);
+    const dismiss = () => ov.remove();
     card.querySelector('#_bypass-add').onclick = () => { api.send('add-bypass', hostname); dismiss(); };
     card.querySelector('#_bypass-ignore').onclick = dismiss;
-    overlay.addEventListener('click', e => { if (e.target === overlay) dismiss(); });
+    ov.addEventListener('click', e => { if (e.target === ov) dismiss(); });
     setTimeout(dismiss, 20000);
   });
 
-  // Bypass list — drives the top panel, the modal list, and the badge
-  let _bypassDomains = [];
+  // ── Bypass list ───────────────────────────────────────────────────
+  let _bypassDomains   = [];
   let _protectedDomains = new Set();
 
   function renderBypassDomains({ list, protected: prot } = {}) {
@@ -878,70 +1134,34 @@ window.addEventListener('load', () => {
     const userAdded   = visible.filter(d => !isProtected(d));
     const systemDoms  = visible.filter(d =>  isProtected(d));
 
-    // Top panel — user-added only (system domains are always there, not interesting to surface)
-    const panel   = document.getElementById('bypassPanel');
-    const listEl  = document.getElementById('bypassList');
-    const countEl = document.getElementById('bypassCount');
-    if (userAdded.length === 0) {
-      panel.classList.add('hidden');
-    } else {
-      panel.classList.remove('hidden');
-      countEl.textContent = userAdded.length;
-      listEl.innerHTML = userAdded.map(d =>
-        `<div class="flex items-center gap-1.5 bg-zinc-800 rounded-lg px-2.5 py-1.5 text-xs">
-          <span class="font-mono text-zinc-300">${d}</span>
-          <button data-host="${d}" class="bypass-remove text-zinc-500 hover:text-red-400 transition-colors ml-0.5 leading-none text-sm font-bold">×</button>
-        </div>`
-      ).join('');
-      listEl.querySelectorAll('.bypass-remove').forEach(btn => {
-        btn.onclick = () => { uiSound('back'); api.send('remove-bypass', btn.dataset.host); };
-      });
-    }
-
-    // Bottom button badge
-    document.getElementById('bypassBadge').textContent = userAdded.length > 0 ? `(${userAdded.length})` : '';
-
-    // Modal list
-    const modalList = document.getElementById('bypassModalList');
+    const inlineList = document.getElementById('bypassInlineList');
     const userHtml = userAdded.length === 0
-      ? '<div class="text-zinc-600 text-xs text-center py-4">No custom bypasses yet.<br>They appear here when an app fails and you add one.</div>'
+      ? '<div class="text-gd text-[10px] text-center py-5 tracking-wide">No bypass domains added yet.</div>'
       : userAdded.map(d =>
-          `<div class="flex items-center justify-between bg-zinc-800 rounded-xl px-3 py-2.5">
-            <span class="font-mono text-xs text-zinc-300">${d}</span>
-            <button data-host="${d}" class="bypass-modal-remove text-zinc-500 hover:text-red-400 transition-colors text-sm font-bold leading-none ml-2">×</button>
+          `<div class="flex items-center justify-between bg-t3 border border-tb rounded px-3 py-2">
+            <span class="font-mono text-[10px] text-g">${d}</span>
+            <button data-host="${d}" class="bypass-inline-remove text-tb2 hover:text-red-400 transition-colors text-[12px] font-bold leading-none ml-2">×</button>
           </div>`
         ).join('');
 
     const systemHtml = systemDoms.length === 0 ? '' :
-      `<div class="text-zinc-600 text-[9px] font-semibold tracking-widest uppercase mt-3 mb-1.5 px-1">Required by SlopProx</div>` +
+      `<div class="text-gd text-[8.5px] font-semibold tracking-widest uppercase mt-3 mb-1.5 px-1">Required by SlopProx</div>` +
       systemDoms.map(d =>
-        `<div class="flex items-center justify-between bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-2.5"
+        `<div class="flex items-center justify-between bg-t border border-tb rounded px-3 py-2"
               title="Required for AI model downloads and app updates — cannot be removed">
-          <span class="font-mono text-xs text-zinc-500">${d}</span>
-          <span class="text-zinc-700 text-xs ml-2" title="Required — cannot be removed">🔒</span>
+          <span class="font-mono text-[10px] text-gd">${d}</span>
+          <span class="text-gd text-[10px] ml-2">[LOCK]</span>
         </div>`
       ).join('');
 
-    modalList.innerHTML = userHtml + systemHtml;
-    modalList.querySelectorAll('.bypass-modal-remove').forEach(btn => {
+    inlineList.innerHTML = userHtml + systemHtml;
+    inlineList.querySelectorAll('.bypass-inline-remove').forEach(btn => {
       btn.onclick = () => { uiSound('back'); api.send('remove-bypass', btn.dataset.host); };
     });
   }
 
   api.on('bypass-domains', payload => renderBypassDomains(payload));
 
-  // Bypass manager modal
-  document.getElementById('bypassManagerBtn').addEventListener('click', () => {
-    uiSound('tap');
-    renderBypassDomains({ list: _bypassDomains, protected: [..._protectedDomains] }); // re-render modal list in case it changed
-    document.getElementById('bypassModal').classList.add('open');
-  });
-  document.getElementById('bypassModalClose').addEventListener('click', () => closeModal('bypassModal'));
-  document.getElementById('bypassModal').addEventListener('click', e => {
-    if (e.target === document.getElementById('bypassModal')) closeModal('bypassModal');
-  });
-
-  // Manual add from modal
   const bypassInput = document.getElementById('bypassAddInput');
   function submitBypassAdd() {
     const val = bypassInput.value.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, '');
@@ -953,50 +1173,54 @@ window.addEventListener('load', () => {
   document.getElementById('bypassAddBtn').addEventListener('click', submitBypassAdd);
   bypassInput.addEventListener('keydown', e => { if (e.key === 'Enter') submitBypassAdd(); });
 
-  // Image card nudge
+  // ── Image card nudge ──────────────────────────────────────────────
   document.getElementById('imageCard').addEventListener('click', e => {
     if (!extensionInstalled && !e.target.closest('.toggle-track')) {
       uiSound('warning');
-      document.getElementById('imgSubtitle').textContent = 'Install the extension above first ↑';
+      document.getElementById('imgSubtitle').textContent = 'Install the extension first ↑';
       setTimeout(() => {
-        document.getElementById('imgSubtitle').textContent = 'Install extension above to enable';
+        document.getElementById('imgSubtitle').textContent = 'Install extension to enable';
       }, 2500);
     }
   });
 
-  // Sync toggles
+  // ── Status syncs ──────────────────────────────────────────────────
   api.on('filter-status', v => {
     mainToggle.set(v);
-    document.getElementById('mainSubtitle').textContent = v
-      ? (extensionInstalled ? 'Filtering AI text via proxy + extension' : 'Filtering AI text via proxy · add extension for social media')
-      : 'AI text filtering paused · proxy still active';
+    syncCardBorder('mainCard', v);
+    document.getElementById('mainSubtitle').textContent = _mainSubtitleText(v);
   });
-  api.on('adblock-status', v => adToggle.set(v));
+  api.on('adblock-status', v => {
+    adToggle.set(v);
+    syncCardBorder('adCard', v);
+    document.getElementById('adSubtitle').textContent = _adSubtitleText();
+  });
   api.on('image-detection-status', v => imageToggle.set(v));
-  api.on('youtube-filter-status', v => youtubeToggle.set(v));
+  api.on('youtube-filter-status',  v => youtubeToggle.set(v));
 
-  // Extension installed
+  // ── Extension installed ───────────────────────────────────────────
   function setExtInstalled(installed) {
     extensionInstalled = installed;
-    const badge = document.getElementById('extBadge');
-    const installBtn = document.getElementById('installExtBtn');
-    const folderBtn = document.getElementById('openFolderBtn');
+    const badge       = document.getElementById('extBadge');
+    const installBtn  = document.getElementById('installExtBtn');
+    const folderBtn   = document.getElementById('openFolderBtn');
     const imgSubtitle = document.getElementById('imgSubtitle');
 
     if (installed) {
       badge.textContent = 'INSTALLED';
-      badge.className = 'shrink-0 text-[9px] font-bold px-2 py-0.5 rounded-full border tracking-wide bg-emerald-900/40 text-emerald-400 border-emerald-700';
-      installBtn.textContent = 'Reinstall';
-      installBtn.className = installBtn.className.replace('bg-indigo-600 hover:bg-indigo-500', 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300');
+      badge.className = 'shrink-0 text-[8.5px] font-bold px-2 py-0.5 border tracking-widest border-tb2 text-g';
+      installBtn.textContent = 'REINSTALL';
+      installBtn.className = installBtn.className
+        .replace('border-m text-m hover:bg-md/20', 'border-tb hover:border-tb2 text-gd hover:text-g');
       folderBtn.classList.remove('hidden');
       imageToggle.setLocked(false);
       document.getElementById('imageCard').classList.add('cursor-pointer');
       imgSubtitle.textContent = 'Uses ~84 MB local model';
     } else {
       badge.textContent = 'NOT INSTALLED';
-      badge.className = 'shrink-0 text-[9px] font-bold px-2 py-0.5 rounded-full border tracking-wide bg-zinc-800 text-zinc-500 border-zinc-700';
+      badge.className = 'shrink-0 text-[8.5px] font-bold px-2 py-0.5 border tracking-widest border-tb text-gd';
       imageToggle.setLocked(true);
-      imgSubtitle.textContent = 'Install extension above to enable';
+      imgSubtitle.textContent = 'Install extension to enable';
     }
   }
 
@@ -1006,71 +1230,27 @@ window.addEventListener('load', () => {
     _updateStgImageLock();
   });
 
-  // Utility buttons
+  // ── Utility buttons ───────────────────────────────────────────────
   document.getElementById('resetBtn').addEventListener('click', () => { uiSound('confirm'); api.send('reset-all'); });
   document.getElementById('certBtn').addEventListener('click', () => { uiSound('confirm'); api.send('reinstall-cert'); });
   document.getElementById('debugLogBtn').addEventListener('click', () => { uiSound('tap'); api.send('open-debug-log'); });
   document.getElementById('openFolderBtn').addEventListener('click', () => { uiSound('tap'); api.send('open-extension-folder'); });
 
-  // Settings button
+  // ── Settings ──────────────────────────────────────────────────────
   document.getElementById('settingsBtn').addEventListener('click', () => {
-    console.log('Settings button clicked, opening modal');
     uiSound('tap');
     document.getElementById('settingsModal').classList.add('open');
-    console.log('Settings modal should now be open');
-
-    // Attach update check button listener when modal opens
-    setTimeout(() => {
-      const _checkUpdatesBtn = document.getElementById('checkUpdatesBtn');
-      console.log('Check updates button found:', _checkUpdatesBtn);
-      if (_checkUpdatesBtn) {
-        console.log('Button disabled state:', _checkUpdatesBtn.disabled);
-        console.log('Button style:', _checkUpdatesBtn.style.cssText);
-
-        _checkUpdatesBtn.addEventListener('click', (e) => {
-          console.log('Check updates button clicked!');
-          console.log('Event target:', e.target);
-          console.log('Event currentTarget:', e.currentTarget);
-          if (_checkingUpdates) {
-            console.log('Already checking, ignoring click');
-            return;
-          }
-          uiSound('tap');
-          _checkingUpdates = true;
-          _checkUpdatesBtn.disabled = true;
-          _checkUpdatesBtn.textContent = 'Checking…';
-          console.log('Sending check-for-updates IPC');
-          api.send('check-for-updates');
-        });
-
-        // Also add a fallback click handler using onclick attribute
-        _checkUpdatesBtn.onclick = () => {
-          console.log('Check updates button clicked via onclick!');
-        };
-      } else {
-        console.error('Check updates button NOT found!');
-      }
-    }, 100); // Small delay to ensure modal is rendered
   });
 
-  // Modal helpers
-  function openModal(id) {
-    uiSound('tap');
-    document.getElementById(id).classList.add('open');
-  }
-  function closeModal(id) {
-    uiSound('back');
-    document.getElementById(id).classList.remove('open');
-  }
+  function openModal(id) { uiSound('tap');  document.getElementById(id).classList.add('open'); }
+  function closeModal(id) { uiSound('back'); document.getElementById(id).classList.remove('open'); }
 
-  // Modal listeners
-  document.getElementById('modalClose').addEventListener('click', () => closeModal('installModal'));
   document.getElementById('aboutModalClose').addEventListener('click', () => closeModal('aboutModal'));
   document.getElementById('privacyModalClose').addEventListener('click', () => closeModal('privacyModal'));
   document.getElementById('termsModalClose').addEventListener('click', () => closeModal('termsModal'));
   document.getElementById('settingsModalClose').addEventListener('click', () => closeModal('settingsModal'));
+  document.getElementById('modalClose').addEventListener('click', () => closeModal('installModal'));
 
-  // Click outside to close modals
   document.getElementById('aboutModal').addEventListener('click', e => { if (e.target === document.getElementById('aboutModal')) closeModal('aboutModal'); });
   document.getElementById('privacyModal').addEventListener('click', e => { if (e.target === document.getElementById('privacyModal')) closeModal('privacyModal'); });
   document.getElementById('termsModal').addEventListener('click', e => { if (e.target === document.getElementById('termsModal')) closeModal('termsModal'); });
@@ -1080,22 +1260,29 @@ window.addEventListener('load', () => {
   document.getElementById('privacyLink').addEventListener('click', () => openModal('privacyModal'));
   document.getElementById('termsLink').addEventListener('click', () => openModal('termsModal'));
 
-  // Install modal logic
+  // ── Install modal ─────────────────────────────────────────────────
   let extPath = '';
   let modalOpen = false;
-  const modal = document.getElementById('installModal');
+  const installModal = document.getElementById('installModal');
 
-  const dotColors = { active: 'bg-indigo-600 text-white', done: 'bg-emerald-600 text-white', pending: 'bg-zinc-700 text-zinc-500' };
-  const lineColors = { active: 'bg-indigo-600', pending: 'bg-zinc-700' };
+  const dotColors = {
+    active:  'step-dot border-2 border-m bg-md text-mb',
+    done:    'step-dot border-2 border-tb2 bg-gg text-g',
+    pending: 'step-dot border border-tb text-gd',
+  };
+  const lineColors = {
+    active:  'flex-1 h-px bg-tb2',
+    pending: 'flex-1 h-px bg-tb',
+  };
 
   function goToStep(n) {
     [1,2,3,4].forEach(i => {
       document.getElementById('step' + i).classList.toggle('active', i === n);
       const dot = document.getElementById('dot' + i);
-      dot.className = 'step-dot ' + (i === n ? dotColors.active : i < n ? dotColors.done : dotColors.pending);
+      dot.className = i === n ? dotColors.active : i < n ? dotColors.done : dotColors.pending;
     });
     [1,2,3].forEach(i => {
-      document.getElementById('line' + i).className = 'flex-1 h-px ' + (i < n ? lineColors.active : lineColors.pending);
+      document.getElementById('line' + i).className = i < n ? lineColors.active : lineColors.pending;
     });
   }
 
@@ -1103,7 +1290,7 @@ window.addEventListener('load', () => {
     if (modalOpen) return;
     modalOpen = true;
     goToStep(1);
-    modal.classList.add('open');
+    installModal.classList.add('open');
     let secs = 3;
     const tick = setInterval(() => {
       secs--;
@@ -1113,42 +1300,37 @@ window.addEventListener('load', () => {
     }, 1000);
   }
 
-  function closeInstallModal() {
-    modal.classList.remove('open');
-    modalOpen = false;
-  }
+  function closeInstallModal() { installModal.classList.remove('open'); modalOpen = false; }
 
   document.getElementById('installExtBtn').addEventListener('click', () => {
     uiSound('confirm');
     api.send('install-extension');
     openInstallModal();
   });
-  document.getElementById('modalClose').addEventListener('click', closeInstallModal);
-  modal.addEventListener('click', e => { if (e.target === modal) closeInstallModal(); });
+  installModal.addEventListener('click', e => { if (e.target === installModal) closeInstallModal(); });
 
   document.getElementById('copyExtUrl').addEventListener('click', e => {
     uiSound('data');
     navigator.clipboard.writeText(detectedExtUrl);
-    e.target.textContent = 'Copied!';
-    setTimeout(() => { e.target.textContent = 'Copy'; }, 1500);
-  });
-
-  document.getElementById('copyPathBtn').addEventListener('click', e => {
-    uiSound('data');
-    const val = document.getElementById('extPathInput').value;
-    navigator.clipboard.writeText(val).catch(() => {});
-    e.target.textContent = 'Copied!';
-    setTimeout(() => { e.target.textContent = 'Copy'; }, 1500);
-  });
-
-  document.getElementById('openFolderStep3').addEventListener('click', () => {
-    uiSound('tap');
-    api.send('open-extension-folder');
+    e.target.textContent = 'COPIED!';
+    setTimeout(() => { e.target.textContent = 'COPY'; }, 1500);
   });
 
   document.getElementById('step2Next').addEventListener('click', () => { uiSound('confirm'); goToStep(3); });
   document.getElementById('step3Next').addEventListener('click', () => { uiSound('confirm'); goToStep(4); });
-  document.getElementById('step4Done').addEventListener('click', () => { uiSound('success'); closeInstallModal(); setExtInstalled(true); });
+  document.getElementById('step4Done').addEventListener('click', () => {
+    uiSound('success');
+    closeInstallModal();
+    setExtInstalled(true);
+    switchTab('filters');
+    if (!imageToggle.isOn()) {
+      setTimeout(() => {
+        imageToggle.set(true);
+        api.send('toggle-image-detection');
+        document.getElementById('imageCard').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }, 350);
+    }
+  });
 
   api.on('extension-install-ready', p => {
     extPath = p;
@@ -1156,7 +1338,19 @@ window.addEventListener('load', () => {
     navigator.clipboard.writeText(p).catch(() => {});
   });
 
-  // Settings toggles
+  document.getElementById('copyPathBtn').addEventListener('click', e => {
+    uiSound('data');
+    navigator.clipboard.writeText(extPath);
+    e.target.textContent = 'COPIED!';
+    setTimeout(() => { e.target.textContent = 'COPY'; }, 1500);
+  });
+
+  document.getElementById('openFolderStep3').addEventListener('click', () => {
+    uiSound('tap');
+    api.send('open-extension-folder');
+  });
+
+  // ── Settings toggles ──────────────────────────────────────────────
   const STG_TOGGLES = [
     { id: 'stgLaunchTrack', key: 'launchAtStartup' },
     { id: 'stgTrayTrack',   key: 'minimizeToTray' },
@@ -1166,7 +1360,7 @@ window.addEventListener('load', () => {
     { id: 'stgYtTrack',     key: 'defaultYoutubeFilter' },
   ];
 
-  let _imgModelsReady = false;
+  let _imgModelsReady  = false;
   const _stgImageTrack = document.getElementById('stgImageTrack');
   const _stgImageNote  = document.getElementById('stgImageNote');
 
@@ -1200,106 +1394,76 @@ window.addEventListener('load', () => {
     _updateStgImageLock();
   });
 
-  // Auto-updater
-  const _updateBanner = document.getElementById('updateBanner');
-  const _updateBannerText = document.getElementById('updateBannerText');
+  // ── Auto-updater UI ───────────────────────────────────────────────
+  const _updateBanner       = document.getElementById('updateBanner');
+  const _updateBannerText   = document.getElementById('updateBannerText');
   const _updateProgressWrap = document.getElementById('updateProgressWrap');
-  const _updateProgressBar = document.getElementById('updateProgressBar');
-  const _updateProgressPct = document.getElementById('updateProgressPct');
-  const _updateRestartBtn = document.getElementById('updateRestartBtn');
+  const _updateProgressBar  = document.getElementById('updateProgressBar');
+  const _updateProgressPct  = document.getElementById('updateProgressPct');
+  const _updateRestartBtn   = document.getElementById('updateRestartBtn');
 
   api.on('update-available', version => {
     uiSound('data');
     _updateBanner.classList.replace('hidden', 'flex');
-    _updateBannerText.textContent = `v${version} downloading…`;
+    _updateBannerText.textContent = `v${version} DOWNLOADING…`;
     _updateProgressWrap.classList.replace('hidden', 'flex');
   });
-
   api.on('update-progress', pct => {
     _updateProgressBar.style.width = `${pct}%`;
     _updateProgressPct.textContent = `${pct}%`;
   });
-
   api.on('update-ready', version => {
     uiSound('unlock');
-    _updateBannerText.textContent = `v${version} ready to install`;
+    _updateBannerText.textContent = `v${version} READY TO INSTALL`;
     _updateProgressWrap.classList.replace('flex', 'hidden');
     _updateRestartBtn.classList.replace('hidden', 'block');
   });
-
   _updateRestartBtn.addEventListener('click', () => { uiSound('confirm'); api.send('install-update'); });
 
-  // Manual update check
   const _checkUpdatesBtn = document.getElementById('checkUpdatesBtn');
-  console.log('Check updates button found:', _checkUpdatesBtn);
-  console.log('Button disabled state:', _checkUpdatesBtn.disabled);
-  console.log('Button style:', _checkUpdatesBtn.style.cssText);
-
-  _checkUpdatesBtn.addEventListener('click', (e) => {
-    console.log('Check updates button clicked!');
-    console.log('Event target:', e.target);
-    console.log('Event currentTarget:', e.currentTarget);
-    if (_checkingUpdates) {
-      console.log('Already checking, ignoring click');
-      return;
-    }
+  _checkUpdatesBtn.addEventListener('click', () => {
+    if (_checkingUpdates) return;
     uiSound('tap');
     _checkingUpdates = true;
     _checkUpdatesBtn.disabled = true;
-    _checkUpdatesBtn.textContent = 'Checking…';
-    console.log('Sending check-for-updates IPC');
+    _checkUpdatesBtn.textContent = 'CHECKING…';
     api.send('check-for-updates');
   });
-
-  // Also add a fallback click handler using onclick attribute
-  _checkUpdatesBtn.onclick = () => {
-    console.log('Check updates button clicked via onclick!');
-  };
-
   api.on('update-check-start', () => {
     _checkingUpdates = true;
     _checkUpdatesBtn.disabled = true;
-    _checkUpdatesBtn.textContent = 'Checking…';
+    _checkUpdatesBtn.textContent = 'CHECKING…';
   });
-
-   api.on('update-check-complete', ({ available, currentVersion }) => {
-     console.log('Received update-check-complete event:', { available, currentVersion });
-     _checkingUpdates = false;
-     _checkUpdatesBtn.disabled = false;
-     _checkUpdatesBtn.textContent = 'Check for Updates';
-     if (!available) {
-       uiSound('confirm');
-       // Show temporary success message
-       const originalText = _checkUpdatesBtn.textContent;
-       _checkUpdatesBtn.textContent = `v${currentVersion} is latest`;
-       setTimeout(() => {
-         _checkUpdatesBtn.textContent = originalText;
-       }, 3000);
-     }
-   });
-
-  api.on('update-check-error', (error) => {
+  api.on('update-check-complete', ({ available, currentVersion }) => {
     _checkingUpdates = false;
     _checkUpdatesBtn.disabled = false;
-    _checkUpdatesBtn.textContent = 'Check for Updates';
+    if (!available) {
+      uiSound('confirm');
+      _checkUpdatesBtn.textContent = `v${currentVersion} IS LATEST`;
+      setTimeout(() => { _checkUpdatesBtn.textContent = 'CHECK FOR UPDATES'; }, 3000);
+    } else {
+      _checkUpdatesBtn.textContent = 'CHECK FOR UPDATES';
+    }
+  });
+  api.on('update-check-error', () => {
+    _checkingUpdates = false;
+    _checkUpdatesBtn.disabled = false;
+    _checkUpdatesBtn.textContent = 'CHECK FOR UPDATES';
     uiSound('error');
-    // Could show error notification here if needed
   });
 
-  // Image model progress
-  const imgModelProgress = document.getElementById('imgModelProgress');
-  const imgProgressBar = document.getElementById('imgProgressBar');
-  const imgProgressLabel = document.getElementById('imgProgressLabel');
+  // ── Image model progress ──────────────────────────────────────────
+  const imgModelProgress    = document.getElementById('imgModelProgress');
+  const imgProgressBar      = document.getElementById('imgProgressBar');
+  const imgProgressLabel    = document.getElementById('imgProgressLabel');
   const imgProgressFraction = document.getElementById('imgProgressFraction');
-  const imgProgressModel = document.getElementById('imgProgressModel');
-  const imgModelReady = document.getElementById('imgModelReady');
-  const imgReadyLabel = document.getElementById('imgReadyLabel');
-  let _imgEnsembleReady = false;
+  const imgProgressModel    = document.getElementById('imgProgressModel');
+  const imgModelReady       = document.getElementById('imgModelReady');
+  const imgReadyLabel       = document.getElementById('imgReadyLabel');
 
   api.on('image-model-progress', ({ loaded, total, label, ok, done }) => {
     if (done) {
       uiSound('unlock');
-      _imgEnsembleReady = true;
       _imgModelsReady = true;
       _updateStgImageLock();
       imgModelProgress.classList.add('hidden');
@@ -1317,9 +1481,49 @@ window.addEventListener('load', () => {
       imgProgressModel.textContent = '';
     } else {
       imgProgressLabel.textContent = ok ? `${label} ready` : `${label} unavailable`;
-      imgProgressModel.textContent = loaded < total ? 'Loading next model…' : '';
+      imgProgressModel.textContent = label;
     }
   });
+
+  // ── External links ────────────────────────────────────────────────
+  api.on('browser-detected', url => { detectedExtUrl = url; });
+
+  const extLinks = {
+    textModelLink:  'https://huggingface.co/onnx-community/tmr-ai-text-detector',
+    imgModelALink:  'https://huggingface.co/yaya36095/ai-source-detector',
+    imgModelBLink:  'https://huggingface.co/onnx-community/SMOGY-Ai-images-detector-ONNX',
+    imgModelCLink:  'https://huggingface.co/onnx-community/Deep-Fake-Detector-v2-Model-ONNX',
+  };
+  Object.entries(extLinks).forEach(([id, url]) => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('click', () => api.send('open-external', url));
+  });
+
+  // ── Theme toggle ──────────────────────────────────────────────────
+  const themeToggle = document.getElementById('themeToggle');
+  const _savedTheme = localStorage.getItem('slopprox-theme') || 'dim';
+  if (_savedTheme === 'vivid') {
+    document.body.classList.add('vivid');
+    themeToggle.textContent = 'VIV';
+  }
+  themeToggle.addEventListener('click', () => {
+    uiSound('tap');
+    const isVivid = document.body.classList.toggle('vivid');
+    themeToggle.textContent = isVivid ? 'VIV' : 'DIM';
+    localStorage.setItem('slopprox-theme', isVivid ? 'vivid' : 'dim');
+  });
+
+  // ── Feature card clicks ───────────────────────────────────────────
+  document.getElementById('proxyCard').addEventListener('click', e => {
+    if (!e.target.closest('.toggle-track')) api.send('toggle-proxy');
+  });
+  document.getElementById('mainCard').addEventListener('click', e => {
+    if (!e.target.closest('.toggle-track')) api.send('toggle-filter');
+  });
+  document.getElementById('adCard').addEventListener('click', e => {
+    if (!e.target.closest('.toggle-track')) api.send('toggle-adblock');
+  });
+
 });
 </script>
 </body>

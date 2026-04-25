@@ -1,270 +1,312 @@
-/* ─────────────────────────────────────────────────────────────────
-   Shared design tokens — used by all three placeholder types
-───────────────────────────────────────────────────────────────── */
+/* SlopProx — injected placeholder styles
+   Palette: dark warm-black bg, sage green text, soft magenta accent.
+   All color/bg/border use !important to prevent host-page CSS overrides. */
 
-/* Reveal button — identical across card / text / image placeholders */
+/* Shared font stack */
+.sf-card-placeholder, .sf-text-placeholder, .sf-img-placeholder,
+.sf-detect-label, .sf-detect-conf, .sf-detect-method, .sf-detect-icon,
+.sf-reveal-btn, .sf-yt-overlay, .sf-yt-feed-badge {
+  font-family: 'JetBrains Mono', 'Cascadia Code', Consolas, 'Courier New', monospace !important;
+  box-sizing: border-box !important;
+  line-height: normal !important;
+}
+
+/* ── Reveal button ─────────────────────────────────────────────── */
 .sf-reveal-btn {
-  padding: 5px 16px;
-  background: rgba(239, 68, 68, 0.12);
-  color: #fca5a5;
-  border: 1px solid rgba(239, 68, 68, 0.38);
-  border-radius: 6px;
-  cursor: pointer;
-  font-size: 13px;
-  font-weight: 600;
-  line-height: 1.65;
-  flex-shrink: 0;
-  white-space: nowrap;
-  font-family: system-ui, -apple-system, sans-serif;
-  transition: background 0.14s, border-color 0.14s;
+  display: inline-block !important;
+  padding: 5px 16px !important;
+  background: rgba(184, 79, 160, 0.12) !important;
+  color: #d070be !important;
+  border: 1px solid rgba(184, 79, 160, 0.55) !important;
+  border-radius: 4px !important;
+  cursor: pointer !important;
+  font-size: 11px !important;
+  font-weight: 700 !important;
+  line-height: 1.65 !important;
+  flex-shrink: 0 !important;
+  white-space: nowrap !important;
+  letter-spacing: 0.08em !important;
+  text-transform: uppercase !important;
+  text-decoration: none !important;
+  text-shadow: none !important;
+  transition: background 0.14s, border-color 0.14s !important;
+  outline: none !important;
 }
 .sf-reveal-btn:hover {
-  background: rgba(239, 68, 68, 0.22);
-  border-color: rgba(239, 68, 68, 0.62);
+  background: rgba(184, 79, 160, 0.28) !important;
+  border-color: rgba(184, 79, 160, 0.85) !important;
+  color: #e090d0 !important;
 }
 
-/* Detection row: 🤖 icon + label + confidence badge */
+/* ── Detection row ─────────────────────────────────────────────── */
 .sf-detect-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
+  display: flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+  flex-wrap: wrap !important;
 }
+
+@keyframes sf-blink { 0%,100%{opacity:1} 50%{opacity:0} }
 
 .sf-detect-icon {
-  font-size: 16px;
-  line-height: 1;
-  flex-shrink: 0;
+  font-size: 13px !important;
+  line-height: 1 !important;
+  flex-shrink: 0 !important;
+  color: #b84fa0 !important;
+  text-shadow: none !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  letter-spacing: -0.02em !important;
+}
+
+.sf-detect-icon .sf-icon-chev {
+  color: #b84fa0 !important;
+  text-shadow: 0 0 8px rgba(184,79,160,0.5) !important;
+}
+
+.sf-detect-icon .sf-icon-cur {
+  color: #9dd4b0 !important;
+  animation: sf-blink 1.1s step-end infinite !important;
+  text-shadow: none !important;
 }
 
 .sf-detect-label {
-  color: #fca5a5;
-  font-family: system-ui, -apple-system, sans-serif;
-  font-size: 14px;
-  font-weight: 700;
-  letter-spacing: 0.01em;
-  white-space: nowrap;
+  color: #9dd4b0 !important;
+  font-size: 11px !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.08em !important;
+  text-transform: uppercase !important;
+  white-space: nowrap !important;
+  text-shadow: none !important;
+  text-decoration: none !important;
 }
 
 .sf-detect-method {
-  color: rgba(255, 255, 255, 0.45);
-  background: rgba(255, 255, 255, 0.07);
-  border-radius: 3px;
-  padding: 1px 6px;
-  font-family: system-ui, -apple-system, sans-serif;
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  white-space: nowrap;
-  flex-shrink: 0;
+  color: #4a8a62 !important;
+  background: rgba(74, 138, 98, 0.14) !important;
+  border: 1px solid rgba(74, 138, 98, 0.3) !important;
+  border-radius: 3px !important;
+  padding: 1px 6px !important;
+  font-size: 9px !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.08em !important;
+  text-transform: uppercase !important;
+  white-space: nowrap !important;
+  flex-shrink: 0 !important;
+  text-shadow: none !important;
 }
 
 .sf-detect-conf {
-  color: #fff;
-  background: rgba(239, 68, 68, 0.48);
-  border-radius: 3px;
-  padding: 1px 6px;
-  font-family: system-ui, -apple-system, sans-serif;
-  font-size: 11px;
-  font-weight: 800;
-  letter-spacing: 0.05em;
-  white-space: nowrap;
-  flex-shrink: 0;
+  color: #d070be !important;
+  background: rgba(184, 79, 160, 0.2) !important;
+  border: 1px solid rgba(184, 79, 160, 0.45) !important;
+  border-radius: 3px !important;
+  padding: 1px 6px !important;
+  font-size: 11px !important;
+  font-weight: 800 !important;
+  letter-spacing: 0.04em !important;
+  white-space: nowrap !important;
+  flex-shrink: 0 !important;
+  text-shadow: none !important;
 }
 
-/* ─────────────────────────────────────────────────────────────────
-   Card placeholder
-   Replaces the ENTIRE post/tweet card in social media feeds.
-   Takes exactly the same vertical space as the original card so
-   the feed layout doesn't shift.
-───────────────────────────────────────────────────────────────── */
-
+/* ── Card placeholder ──────────────────────────────────────────── */
 .sf-card-placeholder {
-  box-sizing: border-box;
-  background: #0c0c0c;
-  border: 1px solid rgba(239, 68, 68, 0.35);
-  border-radius: 12px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 100%;
-  margin: 2px 0;
-  cursor: default;
+  background: #0d1610 !important;
+  border-left: 3px solid #b84fa0 !important;
+  border-top: 1px solid rgba(184, 79, 160, 0.28) !important;
+  border-right: 1px solid rgba(184, 79, 160, 0.28) !important;
+  border-bottom: 1px solid rgba(184, 79, 160, 0.28) !important;
+  border-radius: 8px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 100% !important;
+  margin: 2px 0 !important;
+  cursor: default !important;
 }
 
 .sf-card-inner {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 14px;
-  padding: 24px 28px;
-  text-align: center;
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
+  gap: 12px !important;
+  padding: 20px 24px !important;
+  text-align: center !important;
 }
 
-/* ─────────────────────────────────────────────────────────────────
-   Text placeholder (inline / article context)
-   Hides the original <p>/<li>/etc. with display:none and inserts
-   a compact horizontal bar in its place. No blur, no overflow issues.
-───────────────────────────────────────────────────────────────── */
-
+/* ── Text placeholder ──────────────────────────────────────────── */
 .sf-content {
   display: none !important;
 }
 
 .sf-text-placeholder {
-  box-sizing: border-box;
-  background: rgba(12, 12, 12, 0.9);
-  border: 1px solid rgba(239, 68, 68, 0.32);
-  border-radius: 6px;
-  display: block;
-  margin: 4px 0;
+  background: #0d1610 !important;
+  border-left: 3px solid #b84fa0 !important;
+  border-top: 1px solid rgba(184, 79, 160, 0.22) !important;
+  border-right: 1px solid rgba(184, 79, 160, 0.22) !important;
+  border-bottom: 1px solid rgba(184, 79, 160, 0.22) !important;
+  border-radius: 4px !important;
+  display: block !important;
+  margin: 4px 0 !important;
 }
 
 .sf-text-inner {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 7px 14px;
-  flex-wrap: wrap;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  gap: 12px !important;
+  padding: 7px 14px !important;
+  flex-wrap: wrap !important;
 }
 
-/* ─────────────────────────────────────────────────────────────────
-   Image placeholder
-   Inserted as a DOM sibling immediately before the hidden <img> or
-   its link wrapper. Sits in the same layout context (flex row, grid
-   cell, inline flow) so it naturally occupies the original element's
-   space — no absolute positioning, no scroll tracking needed.
-   width / height / aspect-ratio / flex-shrink set inline by content.js.
-───────────────────────────────────────────────────────────────── */
-
+/* ── Image placeholder ─────────────────────────────────────────── */
 .sf-img-placeholder {
-  box-sizing: border-box;
-  background: #0c0c0c;
-  border: 1px solid rgba(239, 68, 68, 0.38);
-  border-radius: 8px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 80px;
-  overflow: hidden;
-}
-
-@media (prefers-color-scheme: light) {
-  .sf-img-placeholder {
-    background: #f5f5f5;
-    border-color: rgba(239, 68, 68, 0.45);
-  }
+  background: #0d1610 !important;
+  border-top: 3px solid #b84fa0 !important;
+  border-left: 1px solid rgba(184, 79, 160, 0.28) !important;
+  border-right: 1px solid rgba(184, 79, 160, 0.28) !important;
+  border-bottom: 1px solid rgba(184, 79, 160, 0.28) !important;
+  border-radius: inherit !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  min-height: 80px !important;
+  overflow: hidden !important;
 }
 
 .sf-img-inner {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 12px;
-  padding: 18px 22px;
-  text-align: center;
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 10px !important;
+  padding: 16px 20px !important;
+  text-align: center !important;
 }
 
-/* Compact: images between 300–499 px wide */
-.sf-img-placeholder.sf-compact .sf-img-inner   { padding: 10px 14px; gap: 8px; }
-.sf-img-placeholder.sf-compact .sf-detect-label { font-size: 12px; }
-.sf-img-placeholder.sf-compact .sf-detect-icon  { font-size: 14px; }
+.sf-img-placeholder.sf-compact .sf-img-inner    { padding: 8px 12px !important; gap: 7px !important; }
+.sf-img-placeholder.sf-compact .sf-detect-label { font-size: 10px !important; }
+.sf-img-placeholder.sf-compact .sf-detect-icon  { font-size: 11px !important; }
 
-/* ─────────────────────────────────────────────────────────────────
-   Scanning state — applied to the image (or its card) while
-   classification is in-flight. The user sees a blurred placeholder
-   instead of the full image before the verdict is known.
-   JS applies the transition inline so the blur-in and unblur speeds
-   can differ. This class only sets the end-state values.
-───────────────────────────────────────────────────────────────── */
+/* ── Intercept shield (in-flight classification) ────────────────── */
+/* Transparent div injected BEFORE the API call so hover events
+   that would trigger video-preview logic are captured at z-max
+   before the site's handlers can fire. Transitioned in-place to
+   sf-img-placeholder on slop verdict; removed on real-image verdict. */
+[data-sf-shield] {
+  position: absolute !important;
+  z-index: 2147483647 !important;
+  pointer-events: none !important;
+  background: transparent !important;
+}
+
+/* ── Scanning state ────────────────────────────────────────────── */
 .sf-scanning {
   filter: blur(14px) !important;
-  opacity: 0.55 !important;
+  opacity: 0.45 !important;
 }
 
-/* ── YouTube AI-label overlay (covers the player) ──────────────── */
-
+/* ── YouTube overlay ───────────────────────────────────────────── */
 .sf-yt-overlay {
-  position: absolute;
-  inset: 0;
-  background: rgba(8, 8, 8, 0.93);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  z-index: 2147483647;
-  font-family: system-ui, -apple-system, sans-serif;
-  text-align: center;
-  padding: 24px;
-  box-sizing: border-box;
-  cursor: default;
-  pointer-events: none; /* let scroll/swipe pass through to YouTube */
+  position: absolute !important;
+  inset: 0 !important;
+  background: rgba(8, 13, 9, 0.94) !important;
+  border-top: 3px solid #b84fa0 !important;
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 10px !important;
+  z-index: 2147483647 !important;
+  text-align: center !important;
+  padding: 24px !important;
+  cursor: default !important;
+  pointer-events: none !important;
 }
 
 .sf-yt-ov-icon {
-  font-size: 40px;
-  line-height: 1;
+  font-size: 28px !important;
+  line-height: 1 !important;
+  color: #b84fa0 !important;
+  text-shadow: none !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  letter-spacing: -0.04em !important;
+}
+
+.sf-yt-ov-icon .sf-icon-chev {
+  color: #b84fa0 !important;
+  text-shadow: 0 0 12px rgba(184,79,160,0.6) !important;
+}
+
+.sf-yt-ov-icon .sf-icon-cur {
+  color: #9dd4b0 !important;
+  animation: sf-blink 1.1s step-end infinite !important;
+  text-shadow: none !important;
 }
 
 .sf-yt-ov-title {
-  color: #fca5a5;
-  font-size: 17px;
-  font-weight: 700;
-  letter-spacing: 0.01em;
+  color: #9dd4b0 !important;
+  font-size: 13px !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.12em !important;
+  text-transform: uppercase !important;
+  text-shadow: none !important;
 }
 
 .sf-yt-ov-sub {
-  color: rgba(255, 255, 255, 0.6);
-  font-size: 13px;
-  line-height: 1.55;
-  max-width: 320px;
+  color: #4a8a62 !important;
+  font-size: 11px !important;
+  line-height: 1.6 !important;
+  max-width: 300px !important;
+  letter-spacing: 0.02em !important;
+  text-shadow: none !important;
 }
 
 .sf-yt-ov-buttons {
-  display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-  justify-content: center;
-  pointer-events: auto; /* re-enable clicks only for the buttons */
-  margin-top: 4px;
+  display: flex !important;
+  gap: 8px !important;
+  flex-wrap: wrap !important;
+  justify-content: center !important;
+  pointer-events: auto !important;
+  margin-top: 6px !important;
 }
 
 .sf-yt-play-btn, .sf-yt-next-btn {
-  padding: 8px 22px;
-  background: rgba(239, 68, 68, 0.14);
-  color: #fca5a5;
-  border: 1px solid rgba(239, 68, 68, 0.42);
-  border-radius: 8px;
-  cursor: pointer;
-  font-size: 14px;
-  font-weight: 600;
-  font-family: inherit;
-  transition: background 0.14s, border-color 0.14s;
+  padding: 7px 20px !important;
+  background: rgba(184, 79, 160, 0.12) !important;
+  color: #d070be !important;
+  border: 1px solid rgba(184, 79, 160, 0.5) !important;
+  border-radius: 4px !important;
+  cursor: pointer !important;
+  font-size: 11px !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.08em !important;
+  text-transform: uppercase !important;
+  text-shadow: none !important;
 }
 .sf-yt-play-btn:hover, .sf-yt-next-btn:hover {
-  background: rgba(239, 68, 68, 0.26);
-  border-color: rgba(239, 68, 68, 0.65);
+  background: rgba(184, 79, 160, 0.28) !important;
+  border-color: rgba(184, 79, 160, 0.85) !important;
 }
 
-/* ── YouTube feed card badge ───────────────────────────────────── */
-
+/* ── YouTube feed badge ────────────────────────────────────────── */
 .sf-yt-feed-badge {
-  position: absolute;
-  top: 6px;
-  left: 6px;
-  background: rgba(0, 0, 0, 0.82);
-  color: #fca5a5;
-  font-family: system-ui, -apple-system, sans-serif;
-  font-size: 11px;
-  font-weight: 700;
-  padding: 2px 8px;
-  border-radius: 4px;
-  border: 1px solid rgba(239, 68, 68, 0.45);
-  pointer-events: none;
-  z-index: 10;
-  white-space: nowrap;
+  position: absolute !important;
+  top: 6px !important;
+  left: 6px !important;
+  background: rgba(13, 22, 16, 0.92) !important;
+  color: #d070be !important;
+  font-size: 10px !important;
+  font-weight: 700 !important;
+  padding: 2px 8px !important;
+  border-radius: 3px !important;
+  border: 1px solid rgba(184, 79, 160, 0.5) !important;
+  letter-spacing: 0.08em !important;
+  text-transform: uppercase !important;
+  pointer-events: none !important;
+  z-index: 10 !important;
+  white-space: nowrap !important;
+  text-shadow: none !important;
 }

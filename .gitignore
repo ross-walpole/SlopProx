@@ -23,3 +23,6 @@ Thumbs.db
 
 # Claude Code session data
 .claude/
+
+# Landing page lives in its own repo (slopprox-website)
+landing-page/

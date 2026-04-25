@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Ross Walpole <ross.walpole@gmail.com>
+// SPDX-License-Identifier: GPL-3.0-only
+
 // logger.js — no electron dependency.
 
 // main.js must call logger.init(app.getPath('userData')) before the app starts.

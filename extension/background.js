@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Ross Walpole <ross.walpole@gmail.com>
+// SPDX-License-Identifier: GPL-3.0-only
+
 // background.js - MV3 service worker — handles all HTTP requests to the local app server.
 //
 // Content scripts run in the page's security origin (e.g. https://x.com) and
@@ -22,8 +25,6 @@ function _tokenHeaders(extra) {
 }
 
 chrome.runtime.onMessage.addListener((msg, _sender, respond) => {
-  if (msg === 'ping') { respond('pong'); return true; }
-
   if (msg.type === 'status') {
     fetch(BASE + '/status', { signal: AbortSignal.timeout(800) })
       .then(r => r.json())

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Ross Walpole <ross.walpole@gmail.com>
+// SPDX-License-Identifier: GPL-3.0-only
+
 // pac.js — Proxy Auto-Config
 
 // Goal: only route genuine top-level HTML page navigations through the slop-filter

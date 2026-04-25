@@ -1,4 +1,7 @@
-// content.js 
+// SPDX-FileCopyrightText: 2026 Ross Walpole <ross.walpole@gmail.com>
+// SPDX-License-Identifier: GPL-3.0-only
+
+// content.js
 
 (function () {
   'use strict';
@@ -18,8 +21,23 @@
     '.article-body p',
   ].join(', ');
 
-  const MIN_LEN    = 60;
-  const IMG_MIN_PX = 300;
+  const MIN_LEN         = 60;
+  const IMG_MIN_PX      = 300;
+  const IMG_DISP_MIN_PX = 200;
+  const IMG_CONF_FORCE  = 92;
+
+  // Hover events that trigger video previews on thumbnail containers.
+  // Blocked in capture phase during classification so preview cannot start
+  // before the verdict arrives. Does not include click/pointer{down,up} to
+  // avoid breaking scroll and our own reveal button.
+  const _HOVER_BLOCK_EVENTS = [
+    'mouseenter', 'mouseleave', 'mouseover', 'mouseout',
+    'pointerenter', 'pointerleave', 'pointerover', 'pointerout',
+  ];
+
+  const _SF_DEBUG = (typeof chrome !== 'undefined' && chrome.runtime?.id)
+    ? (ctx, err) => console.debug(`[sf:${ctx}]`, err?.message ?? err)
+    : () => {};
 
   let filterEnabled         = true;
   let imageDetectionEnabled = false;
@@ -85,10 +103,14 @@
 
       // ── 3. Custom element / web component (e.g., shreddit-post) ─
       // Hyphenated tag names are always custom elements. If they're
-      // substantial in size and have peers, they're feed items.
+      // substantial in size, have peers, AND contain visible text content
+      // (a title, description, etc.), they're feed cards.
+      // The text check prevents returning image-wrapper custom elements
+      // (e.g. yt-image, ytd-thumbnail) that also have hyphens and peers
+      // but contain no text — those are not cards.
       if (tag.includes('-') && rect.height > 100) {
         const peers = [...(parentEl?.children || [])].filter(c => c !== node && c.offsetHeight > 40);
-        if (peers.length >= 1) return node;
+        if (peers.length >= 1 && (node.innerText?.trim().length > 30)) return node;
       }
 
       // ── 4. Visual card ──────────────────────────────────────────
@@ -147,6 +169,7 @@
   // background message, cutting per-page HTTP round-trips by ~70%.
   // Each entry: { text, resolve } where resolve(result) fires on completion.
   const _textBatchQueue = [];
+  const _TEXT_BATCH_MAX = 200;
   let _textBatchTimer = null;
 
   function _flushTextBatch() {
@@ -172,6 +195,10 @@
 
   function _batchClassifyText(text) {
     return new Promise(resolve => {
+      if (_textBatchQueue.length >= _TEXT_BATCH_MAX) {
+        const dropped = _textBatchQueue.shift();
+        dropped.resolve({ ok: false });
+      }
       _textBatchQueue.push({ text, resolve });
       if (!_textBatchTimer) _textBatchTimer = setTimeout(_flushTextBatch, 50);
     });
@@ -203,18 +230,32 @@
         });
         document.querySelectorAll('.sf-img-placeholder').forEach(p => {
           if (p._sfTarget) {
-            p._sfTarget.style.opacity = '';
+            p._sfTarget.style.opacity       = '';
             p._sfTarget.style.pointerEvents = '';
             delete p._sfTarget.dataset.sfImgBlurred;
           }
-          if (p._sfVideo && p._sfVideoPaused === false) p._sfVideo.play().catch(() => {});
+          unblockVideosNear(p, false);
           p.remove();
+        });
+        // Clean up any intercept shields still active from in-flight classifications.
+        document.querySelectorAll('[data-sf-shield]').forEach(s => {
+          s._sfRelease?.(); // remove capture-phase hover block from container
+          const img = s._sfTarget;
+          if (img) {
+            img.style.opacity       = '';
+            img.style.pointerEvents = '';
+            img.classList.remove('sf-scanning');
+            delete img.dataset.sfImgBlurred;
+            delete img.dataset.sfQueued;
+            delete img.dataset.sfProcessing;
+          }
+          s.remove();
         });
         observer.disconnect();
         imageObserver.disconnect();
         clearInterval(statusTimer);
       }
-    } catch (_) {}
+    } catch (err) { _SF_DEBUG('poll-status', err); }
   }
 
   // ── Card slop ───────────────────────────────────────────────────
@@ -232,6 +273,31 @@
   //   - e.preventDefault() stops any default action on the propagation
   //     path (link navigation, form submit, etc.).
   //
+  function _detectRowHtml(label, confidence, method) {
+    return `<div class="sf-detect-row">
+      <span class="sf-detect-icon"><span class="sf-icon-chev">&gt;</span><span class="sf-icon-cur">_</span></span>
+      <span class="sf-detect-label">${label}</span>
+      <span class="sf-detect-conf">${confidence}%</span>
+      ${method ? `<span class="sf-detect-method">${method}</span>` : ''}
+    </div>`;
+  }
+
+  function _wireRevealBtn(placeholder, onReveal) {
+    let revealed = false;
+    const doReveal = (e) => {
+      if (revealed) return;
+      revealed = true;
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+      e.preventDefault();
+      onReveal();
+    };
+    const btn = placeholder.querySelector('.sf-reveal-btn');
+    btn.style.pointerEvents = 'auto';
+    btn.addEventListener('pointerup', doReveal);
+    btn.addEventListener('click',     doReveal);
+  }
+
   function applyCardSlop(card, confidence, type, btnText, method) {
     if (card.dataset.sfCardBlurred || card.dataset.sfRevealed) return;
     card.dataset.sfCardBlurred = 'true';
@@ -256,32 +322,16 @@
 
       placeholder.innerHTML = `
         <div class="sf-card-inner">
-          <div class="sf-detect-row">
-            <span class="sf-detect-icon">🤖</span>
-            <span class="sf-detect-label">${label}</span>
-            <span class="sf-detect-conf">${confidence}%</span>
-            ${method ? `<span class="sf-detect-method">${method}</span>` : ''}
-          </div>
+          ${_detectRowHtml(label, confidence, method)}
           <button class="sf-reveal-btn" type="button">${revealLabel}</button>
         </div>`;
 
-      let revealed = false;
-      const doReveal = (e) => {
-        if (revealed) return;
-        revealed = true;
-        e.stopPropagation();
-        e.stopImmediatePropagation();
-        e.preventDefault();
+      _wireRevealBtn(placeholder, () => {
         card.style.display = placeholder._sfCardDisplay;
         delete card.dataset.sfCardBlurred;
         card.dataset.sfRevealed = 'true';
         placeholder.remove();
-      };
-
-      const btn = placeholder.querySelector('.sf-reveal-btn');
-      btn.style.pointerEvents = 'auto';
-      btn.addEventListener('pointerup', doReveal);
-      btn.addEventListener('click',     doReveal);
+      });
 
       card.style.display = 'none';
       card.insertAdjacentElement('afterend', placeholder);
@@ -290,7 +340,7 @@
       chrome.storage.session.get(countKey).then(s => {
         chrome.storage.session.set({ [countKey]: (s[countKey] || 0) + 1 });
       }).catch(() => {});
-    } catch (_) {}
+    } catch (err) { _SF_DEBUG('apply-card-slop', err); }
   }
 
   // ── Section-context injection ───────────────────────────────────
@@ -360,6 +410,7 @@
 
   async function classifyCardText(card) {
     if (!filterEnabled) return;
+    if (document.documentElement.dataset.sfProxy === '1') return;
     if (card.dataset.sfCardBlurred || card.dataset.sfRevealed || card.dataset.sfCardTextChecked) return;
     card.dataset.sfCardTextChecked = 'true';
 
@@ -377,7 +428,7 @@
       if (!resp?.ok) return;
       const { isSlop, confidence, method } = resp.data;
       if (isSlop) applyCardSlop(card, confidence, 'text', undefined, method);
-    } catch (_) {}
+    } catch (err) { _SF_DEBUG('classify-card', err); }
   }
 
   // Scan root for post cards (or treat root itself as a card).
@@ -391,6 +442,7 @@
   // ── Text classification ─────────────────────────────────────────
   async function classifyText(el) {
     if (!filterEnabled || el.dataset.slopChecked) return;
+    if (document.documentElement.dataset.sfProxy === '1') return;
     // Skip elements already inside a card that was hidden at the card level
     if (el.closest('[data-sf-card-blurred]')) return;
     const content = el.textContent.trim().replace(/\s+/g, ' ');
@@ -406,10 +458,14 @@
       if (!resp?.ok) return;
       const { isSlop, confidence, method } = resp.data;
       if (isSlop) applyTextSlop(el, confidence, method);
-    } catch (_) {}
+    } catch (err) { _SF_DEBUG('classify-text', err); }
   }
 
   function applyTextSlop(el, confidence, method) {
+    // Guard: a concurrent classifyCardText may have hidden the card while we were awaiting
+    // the batch API. findCardBoundary returns null when it sees data-sf-card-blurred, which
+    // would incorrectly trigger inline mode inside a hidden card.
+    if (el.closest('[data-sf-card-blurred]')) return;
     const card = findCardBoundary(el);
     if (card) { applyCardSlop(card, confidence, 'text', undefined, method); return; }
 
@@ -426,38 +482,29 @@
 
       placeholder.innerHTML = `
         <div class="sf-text-inner">
-          <div class="sf-detect-row">
-            <span class="sf-detect-icon">🤖</span>
-            <span class="sf-detect-label">Suspected AI Text</span>
-            <span class="sf-detect-conf">${confidence}%</span>
-            ${method ? `<span class="sf-detect-method">${method}</span>` : ''}
-          </div>
+          ${_detectRowHtml('Suspected AI Text', confidence, method)}
           <button class="sf-reveal-btn" type="button">Show text</button>
         </div>`;
 
-      let revealed = false;
-      const doReveal = (e) => {
-        if (revealed) return;
-        revealed = true;
-        e.stopPropagation();
-        e.stopImmediatePropagation();
-        e.preventDefault();
+      // When el is a <li>, a bare <div> sibling is invalid HTML and browsers
+      // may hoist it out of the list. Wrap the placeholder in a <li> instead.
+      const toInsert = el.tagName === 'LI'
+        ? Object.assign(document.createElement('li'), { style: 'list-style:none' })
+        : placeholder;
+      if (toInsert !== placeholder) toInsert.appendChild(placeholder);
+
+      _wireRevealBtn(placeholder, () => {
         el.classList.remove('sf-content');
         delete el.dataset.slopBlurred;
-        placeholder.replaceWith(el);
-      };
+        toInsert.replaceWith(el);
+      });
 
-      const btn = placeholder.querySelector('.sf-reveal-btn');
-      btn.style.pointerEvents = 'auto';
-      btn.addEventListener('pointerup', doReveal);
-      btn.addEventListener('click',     doReveal);
-
-      el.parentNode.insertBefore(placeholder, el);
+      el.parentNode.insertBefore(toInsert, el);
 
       chrome.storage.session.get('textBlocked').then(s => {
         chrome.storage.session.set({ textBlocked: (s.textBlocked || 0) + 1 });
       }).catch(() => {});
-    } catch (_) {}
+    } catch (err) { _SF_DEBUG('apply-text-slop', err); }
   }
 
   // ── Page-level AI density prior ─────────────────────────────────
@@ -497,6 +544,10 @@ function getPagePriorAdjustment() {
     if (/\.svg(\?|$)/i.test(src)) return true;
     if (img.getAttribute('aria-hidden') === 'true') return true;
     if (img.getAttribute('role') === 'presentation') return true;
+
+    // Skip images inside interactive controls — avatars in buttons, menu icons, etc.
+    if (img.closest('[role="button"],[role="menuitem"],[role="option"],[role="tab"]')) return true;
+
     const w = img.naturalWidth, h = img.naturalHeight;
     if (w && h) {
       const ratio = w / h;
@@ -507,6 +558,15 @@ function getPagePriorAdjustment() {
       // landscape (roughly 0.5–2.5). Skip aggressively wide or tall images.
       if (ratio > 2.5 || ratio < 0.45) return true;
     }
+
+    // Skip images rendered at small display sizes — catches profile pictures and
+    // avatars whose natural dimensions are large (e.g. 512×512) but are shown at
+    // e.g. 40×40. getBoundingClientRect is reliable here because shouldSkipImage
+    // is only called after the image has loaded and entered (or is near) the viewport.
+    const rendered = img.getBoundingClientRect();
+    if (rendered.width > 0 && rendered.height > 0 &&
+        (rendered.width < IMG_DISP_MIN_PX || rendered.height < IMG_DISP_MIN_PX)) return true;
+
     return false;
   }
 
@@ -521,53 +581,252 @@ function getPagePriorAdjustment() {
     if (!filterEnabled || !imageDetectionEnabled) return;
     if (img.dataset.sfQueued || img.dataset.sfProcessing || shouldSkipImage(img)) return;
 
-    const srcKey = img.src.split('?')[0]; // Normalize: ignore query params
+    const srcKey = img.src.split('?')[0];
+
+    // Cache hit: verdict is immediate — no race window, use applyImageSlop directly.
     if (pageImageCache.has(srcKey)) {
       const cached = pageImageCache.get(srcKey);
-      if (cached.blocked) {
-        applyImageSlop(img, cached.confidence, 'cached');
-      }
+      pageImageCache.delete(srcKey);
+      pageImageCache.set(srcKey, cached); // LRU promote
+      if (cached.blocked) applyImageSlop(img, cached.confidence, 'cached');
       return;
     }
 
-    // Skip small images before the HTTP round-trip — saves backend overhead.
     if (img.naturalWidth < IMG_MIN_PX || img.naturalHeight < IMG_MIN_PX) return;
 
-    img.dataset.sfQueued = 'true';
+    // Don't stack multiple shields on the same card. YouTube's moving thumbnail
+    // adds several <img> preview frames when the user hovers; without this guard
+    // each frame would create its own shield/placeholder at the card level.
+    if (!img.closest('[data-sf-card-blurred]')) {
+      const existingCard = findCardBoundary(img);
+      if (existingCard?.querySelector('[data-sf-shield], .sf-img-placeholder')) return;
+    }
+
+    img.dataset.sfQueued     = 'true';
     img.dataset.sfProcessing = 'true';
 
-    // Blur immediately — the user should not see the image before the verdict.
-    img.style.transition = 'filter 0.12s, opacity 0.12s';
+    // ── EARLY INTERCEPTION ──────────────────────────────────────────
+    // Find the container and create the intercept shield BEFORE the API
+    // call. The shield is transparent during classification but sits at
+    // max z-index and blocks all hover/pointer events that would trigger
+    // the site's video-preview logic. If verdict = slop the shield is
+    // promoted to the visible placeholder in-place (zero timing gap).
+    // If verdict = real it is removed cleanly with _abortShield.
+    let container, shieldStyle;
+    try {
+      ({ container, shieldStyle } = _prepareContainer(img));
+    } catch (err) {
+      _SF_DEBUG('prepare-container', err);
+      delete img.dataset.sfQueued;
+      delete img.dataset.sfProcessing;
+      return;
+    }
+
+    const shield = document.createElement('div');
+    shield.dataset.sfShield    = 'true';
+    shield.style.position      = 'absolute';
+    shield.style.zIndex        = '2147483647';
+    // pointer-events:none so clicks pass through to the card's <a> link during
+    // classification. Hover suppression is handled by the document-level capture
+    // block — the shield itself does not need to absorb events.
+    shield.style.pointerEvents = 'none';
+    shield.style.cursor        = 'default';
+    Object.assign(shield.style, shieldStyle);
+    container.appendChild(shield);
+
+    // Capture-phase blocker kills hover events on the container before the
+    // site's own listeners can fire. Stored on the shield for pollStatus cleanup.
+    const releaseHoverBlock   = _installHoverBlock(container);
+    shield._sfRelease         = releaseHoverBlock;
+
+    // Block all videos already present within the container boundary.
+    // Broader than findAssociatedVideo (which only checks 4 ancestor levels)
+    // because on YouTube the video preview element may be a distant sibling.
+    for (const v of container.querySelectorAll('video')) {
+      _killAutoplayVideo(v);
+      blockVideoPlay(v);
+    }
+
+    // Apply scanning visual. pointer-events:none on the image itself prevents
+    // mouseover/mouseenter from reaching the image and bubbling to site listeners
+    // on ancestor elements that are not covered by the shield's capture block.
+    img.style.pointerEvents = 'none';
+    img.style.transition    = 'filter 0.12s, opacity 0.12s';
     img.classList.add('sf-scanning');
 
     try {
       const resp = await chrome.runtime.sendMessage({ type: 'classifyImage', url: img.src });
-      if (!resp?.ok) { _clearScan(img); return; }
+
+      if (!resp?.ok) { _abortShield(img, shield, releaseHoverBlock); return; }
 
       const { isAiImage, confidence, method } = resp.data;
-      // Cache result
-      const shouldBlock = isAiImage;
-      _pageImageCacheSet(srcKey, { blocked: shouldBlock, confidence });
-      // Increment AFTER response so ratio is always based on real results.
+      _pageImageCacheSet(srcKey, { blocked: isAiImage, confidence });
       pageCompletedCount++;
-      // Apply page-level prior: +8 on AI-heavy pages can push borderline images over threshold.
-      // Threshold matches service.js: combined > 0.95 → confidence >= 95.
       const adjustedConf = confidence + getPagePriorAdjustment();
-      const blockIt = shouldBlock || adjustedConf >= 92;
-      if (blockIt) {
+
+      if (isAiImage || adjustedConf >= IMG_CONF_FORCE) {
         pageAiCount++;
-        // Snap-remove blur before replacing element — no transition needed.
         img.style.transition = '';
         img.classList.remove('sf-scanning');
-        // Clear sfProcessing before applyImageSlop — its guard checks this flag
-        // and would bail immediately if it's still set from the classify request.
+        img.style.opacity = '0';
         delete img.dataset.sfProcessing;
-        applyImageSlop(img, confidence, method);
+        _promoteShield(shield, img, container, confidence, method, releaseHoverBlock);
       } else {
-        // Real image — fade the blur out smoothly.
-        _clearScan(img);
+        _abortShield(img, shield, releaseHoverBlock);
       }
-    } catch (_) { _clearScan(img); }
+    } catch (err) {
+      _SF_DEBUG('classify-image', err);
+      _abortShield(img, shield, releaseHoverBlock);
+    }
+  }
+
+  // Verdict = real: remove shield and restore image to normal.
+  function _abortShield(img, shield, releaseHoverBlock) {
+    const container = shield.parentElement; // capture before removal
+    releaseHoverBlock();
+    shield.remove();
+    img.style.pointerEvents = '';
+    delete img.dataset.sfQueued;
+    delete img.dataset.sfProcessing;
+    _clearScan(img);
+    // Restore any videos that were blocked when classification started.
+    // Without this, non-slop verdicts leave the card's videos permanently frozen.
+    if (container) unblockVideosNear(container, false);
+  }
+
+  // Verdict = slop: transition the transparent shield into the visible
+  // placeholder in-place. There is no timing gap between "shield removed"
+  // and "placeholder added" because we reuse the same element.
+  function _promoteShield(shield, img, container, confidence, method, releaseHoverBlock) {
+    img.dataset.sfImgBlurred = 'true';
+
+    delete shield.dataset.sfShield;
+    shield.className           = 'sf-img-placeholder';
+    shield.style.pointerEvents = 'auto'; // was none during classification; reveal btn needs events
+    shield._sfTarget           = img;
+    shield._sfRelease          = null; // prevent double-call from pollStatus
+
+    const nw = img.naturalWidth || parseInt(img.getAttribute('width') || '0', 10);
+    if (nw > 0 && nw < 500) shield.classList.add('sf-compact');
+
+    shield.innerHTML = `
+      <div class="sf-img-inner">
+        ${_detectRowHtml('Suspected AI Image', confidence, method)}
+        <button class="sf-reveal-btn" type="button">Show image</button>
+      </div>`;
+
+    _wireRevealBtn(shield, () => {
+      img.style.opacity       = '';
+      img.style.pointerEvents = '';
+      delete img.dataset.sfImgBlurred;
+      releaseHoverBlock();
+      unblockVideosNear(container, true);
+      shield.remove();
+    });
+    installGuards(shield);
+
+    chrome.storage.session.get('imagesBlocked').then(s => {
+      chrome.storage.session.set({ imagesBlocked: (s.imagesBlocked || 0) + 1 });
+    }).catch(() => {});
+  }
+
+  // ── Container preparation (shared by classifyImage and applyImageSlop) ──
+  // Preferred container is the card boundary (e.g. ytd-rich-item-renderer on
+  // YouTube). Placing our shield/placeholder there puts it ABOVE intermediate
+  // custom-element stacking contexts such as yt-image or a.yt-simple-endpoint,
+  // which would otherwise lose to a sibling ytd-moving-thumbnail-renderer even
+  // if our element has z-index:2147483647 (stacking contexts are compared at
+  // the level they share a common ancestor, not by their own z-index values).
+  function _prepareContainer(img) {
+    const imgRect = img.getBoundingClientRect();
+
+    // Use card boundary when available so we outrank nested site overlays.
+    const card = !img.closest('[data-sf-card-blurred]') ? findCardBoundary(img) : null;
+    let container = card;
+
+    if (!container) {
+      // No card: climb to nearest non-static, non-sticky, non-fixed ancestor.
+      container = img.parentElement;
+      for (let i = 0; i < 6 && container && container !== document.body; i++) {
+        const pos = getComputedStyle(container).position;
+        if (pos !== 'static' && pos !== 'sticky' && pos !== 'fixed') break;
+        container = container.parentElement;
+      }
+      if (!container || container === document.body) container = img.parentElement;
+
+      const containerRect = container.getBoundingClientRect();
+      if (containerRect.width  > imgRect.width  * 3 &&
+          containerRect.height > imgRect.height * 2) {
+        container = img.parentElement;
+      }
+    }
+
+    if (getComputedStyle(container).position === 'static') {
+      container.style.position = 'relative';
+    }
+
+    const finalRect  = container.getBoundingClientRect();
+    const fillsContainer =
+      Math.abs(imgRect.width  - finalRect.width)  < 8 &&
+      Math.abs(imgRect.height - finalRect.height) < 8;
+    const nearOrigin =
+      imgRect.top  - finalRect.top  < 4 &&
+      imgRect.left - finalRect.left < 4;
+
+    const shieldStyle = {};
+    if (fillsContainer || nearOrigin) {
+      shieldStyle.inset = '0';
+    } else {
+      shieldStyle.top    = (imgRect.top  - finalRect.top)  + 'px';
+      shieldStyle.left   = (imgRect.left - finalRect.left) + 'px';
+      shieldStyle.width  = imgRect.width  + 'px';
+      shieldStyle.height = imgRect.height + 'px';
+    }
+
+    return { container, shieldStyle };
+  }
+
+  // ── Capture-phase hover block ───────────────────────────────────
+  // Registered on DOCUMENT so it fires before any site listener anywhere in
+  // the tree, regardless of registration order or phase. Only blocks events
+  // whose target is inside our container. stopImmediatePropagation prevents
+  // further capture listeners and all bubble-phase listeners from receiving
+  // the event — including on the container itself and its ancestors.
+  // Note: no early return for our own elements (shield, placeholder, button).
+  // Hover events should always be suppressed; our UI only needs click/pointerup.
+  function _installHoverBlock(container) {
+    function blocker(e) {
+      if (!container.contains(e.target) && container !== e.target) return;
+      e.stopImmediatePropagation();
+    }
+    for (const evt of _HOVER_BLOCK_EVENTS) {
+      document.addEventListener(evt, blocker, true);
+    }
+    return function releaseHoverBlock() {
+      for (const evt of _HOVER_BLOCK_EVENTS) {
+        document.removeEventListener(evt, blocker, true);
+      }
+    };
+  }
+
+  // ── Autoplay removal ────────────────────────────────────────────
+  // Strips the autoplay attribute synchronously (called from MutationObserver)
+  // before the browser can act on it. Also overrides video.load() so a
+  // load() → implicit-autoplay cycle cannot restart playback.
+  function _killAutoplayVideo(vid) {
+    vid.removeAttribute('autoplay');
+    vid.autoplay = false;
+    vid.preload  = 'none';
+    if (!vid.paused) vid.pause();
+    if (!vid.dataset.sfLoadBlocked) {
+      vid.dataset.sfLoadBlocked = 'true';
+      const nativeLoad = HTMLVideoElement.prototype.load.bind(vid);
+      vid.load = function () {
+        this.removeAttribute('autoplay');
+        this.autoplay = false;
+        nativeLoad();
+      };
+    }
   }
 
   function findAssociatedVideo(img) {
@@ -581,6 +840,67 @@ function getPagePriorAdjustment() {
     return null;
   }
 
+  // Override video.play as an own property on the element.
+  // Own-property overrides on DOM nodes are visible across Chrome's isolated-world
+  // boundary, so page JS calling video.play() receives our no-op directly.
+  // Event-based interception (addEventListener 'play') has a latency gap — the
+  // browser starts playback before our handler can pause it. Overriding the method
+  // prevents playback from beginning at all, with no race condition.
+  function blockVideoPlay(video) {
+    if (!video || video.dataset.sfVidBlocked) return;
+    video.dataset.sfVidBlocked = 'true';
+    if (!video.paused) video.pause();
+    video.play = () => Promise.resolve();
+  }
+
+  function unblockVideoPlay(video, andPlay) {
+    if (!video || !video.dataset.sfVidBlocked) return;
+    delete video.dataset.sfVidBlocked;
+    delete video.play; // removes own-property, restores prototype play
+    if (andPlay) HTMLVideoElement.prototype.play.call(video).catch(() => {});
+  }
+
+  // Unblock every sfVidBlocked video found within 6 ancestor levels of el.
+  function unblockVideosNear(el, andPlay) {
+    let n = el;
+    for (let i = 0; i < 6 && n && n !== document.body; i++) {
+      n.querySelectorAll?.('video[data-sf-vid-blocked]').forEach(v => unblockVideoPlay(v, andPlay));
+      n = n.parentElement;
+    }
+  }
+
+  // Block any video near el that isn't already blocked.
+  // Called synchronously from the MutationObserver so hover-autoplay cannot
+  // slip through the 300 ms batch window.
+  // Also checks for in-flight shields ([data-sf-shield]) so videos added
+  // during classification are caught before the placeholder exists.
+  function blockVideosNear(el) {
+    const vids = el.tagName === 'VIDEO' ? [el] : [...(el.querySelectorAll?.('video') || [])];
+    for (const vid of vids) {
+      if (vid.dataset.sfVidBlocked) continue;
+      let n = vid.parentElement;
+      for (let i = 0; i < 6 && n && n !== document.body; i++) {
+        if (n.querySelector('.sf-img-placeholder, [data-sf-shield]')) {
+          _killAutoplayVideo(vid); // strip autoplay attr before browser acts on it
+          blockVideoPlay(vid);
+          break;
+        }
+        n = n.parentElement;
+      }
+    }
+  }
+
+  function interceptFeedVideo(video) {
+    if (!video || video.dataset.sfVidBlocked) return null;
+    blockVideoPlay(video);
+    return {
+      release() { unblockVideoPlay(video, false); },
+      play()    { unblockVideoPlay(video, true);  },
+    };
+  }
+
+  // Cache-hit path only — no race window, so no shield needed.
+  // Live classifications go through classifyImage → _promoteShield instead.
   function applyImageSlop(img, confidence, method) {
     if (img.dataset.sfImgBlurred || img.dataset.sfProcessing) return;
     delete img.dataset.sfProcessing;
@@ -588,108 +908,47 @@ function getPagePriorAdjustment() {
     if (!img.parentNode) return;
 
     try {
-      const video = findAssociatedVideo(img);
-      const weStartedVideo = video && !video.paused;
-      if (weStartedVideo) video.pause();
-
-      // Find the nearest positioned ancestor (up to 6 levels).
-      // Appending inside it keeps our placeholder within the same clipping /
-      // stacking context, so overflow:hidden on a parent container cannot clip us.
-      let container = img.parentElement;
-      for (let i = 0; i < 6 && container && container !== document.body; i++) {
-        if (getComputedStyle(container).position !== 'static') break;
-        container = container.parentElement;
-      }
-      if (!container || container === document.body) {
-        container = img.parentElement;
-        if (getComputedStyle(container).position === 'static') {
-          container.style.position = 'relative';
-        }
-      }
-
-      // Use opacity:0 + pointer-events:none instead of display:none.
-      // This keeps the image in the layout flow so the container does not
-      // collapse — critical for h-full / w-full / flex images on Reddit,
-      // Twitter, LinkedIn, etc. where display:none shrinks the cell to zero
-      // and overflow:hidden then clips the placeholder.
-      img.style.opacity = '0';
+      interceptFeedVideo(findAssociatedVideo(img));
+      img.style.opacity       = '0';
       img.style.pointerEvents = 'none';
 
-      // Measure both rects AFTER hiding the image (opacity doesn't affect layout
-      // so positions stay identical to the visible state).
-      const imgRect       = img.getBoundingClientRect();
-      const containerRect = container.getBoundingClientRect();
+      const { container, shieldStyle } = _prepareContainer(img);
+      const releaseHoverBlock = _installHoverBlock(container);
 
       const placeholder = document.createElement('div');
       placeholder.className      = 'sf-img-placeholder';
       placeholder._sfTarget      = img;
-      placeholder._sfVideo       = video || null;
-      placeholder._sfVideoPaused = weStartedVideo ? false : null;
-
-      placeholder.style.position = 'absolute';
-      placeholder.style.zIndex   = '2147483647';
-
-      // If the image essentially fills the container (within 8 px on each axis),
-      // use inset:0 so the overlay automatically tracks any future container resize.
-      // Otherwise pin to the exact measured offset so we don't cover sibling content.
-      const fillsContainer =
-        Math.abs(imgRect.width  - containerRect.width)  < 8 &&
-        Math.abs(imgRect.height - containerRect.height) < 8;
-      const nearOrigin =
-        imgRect.top  - containerRect.top  < 4 &&
-        imgRect.left - containerRect.left < 4;
-
-      if (fillsContainer || nearOrigin) {
-        placeholder.style.inset = '0';
-      } else {
-        placeholder.style.top    = (imgRect.top  - containerRect.top)  + 'px';
-        placeholder.style.left   = (imgRect.left - containerRect.left) + 'px';
-        placeholder.style.width  = imgRect.width  + 'px';
-        placeholder.style.height = imgRect.height + 'px';
-      }
+      placeholder.style.position      = 'absolute';
+      placeholder.style.zIndex        = '2147483647';
+      placeholder.style.pointerEvents = 'auto';
+      Object.assign(placeholder.style, shieldStyle);
 
       const nw = img.naturalWidth || parseInt(img.getAttribute('width') || '0', 10);
       if (nw > 0 && nw < 500) placeholder.classList.add('sf-compact');
 
       placeholder.innerHTML = `
         <div class="sf-img-inner">
-          <div class="sf-detect-row">
-            <span class="sf-detect-icon">🤖</span>
-            <span class="sf-detect-label">Suspected AI Image</span>
-            <span class="sf-detect-conf">${confidence}%</span>
-            ${method ? `<span class="sf-detect-method">${method}</span>` : ''}
-          </div>
+          ${_detectRowHtml('Suspected AI Image', confidence, method)}
           <button class="sf-reveal-btn" type="button">Show image</button>
         </div>`;
 
-      let revealed = false;
-      const doReveal = (e) => {
-        if (revealed) return;
-        revealed = true;
-        e.stopPropagation();
-        e.stopImmediatePropagation();
-        e.preventDefault();
-        img.style.opacity = '';
+      _wireRevealBtn(placeholder, () => {
+        img.style.opacity       = '';
         img.style.pointerEvents = '';
         delete img.dataset.sfImgBlurred;
-        if (placeholder._sfVideo && placeholder._sfVideoPaused === false) {
-          placeholder._sfVideo.play().catch(() => {});
-        }
+        releaseHoverBlock();
+        unblockVideosNear(container, true);
         placeholder.remove();
-      };
-
-      const btn = placeholder.querySelector('.sf-reveal-btn');
-      btn.addEventListener('click', doReveal);
+      });
       installGuards(placeholder);
-
       container.appendChild(placeholder);
 
       chrome.storage.session.get('imagesBlocked').then(s => {
         chrome.storage.session.set({ imagesBlocked: (s.imagesBlocked || 0) + 1 });
       }).catch(() => {});
     } catch (err) {
-      console.error('[sf] applyImageSlop:', err);
-      img.style.opacity = '';
+      _SF_DEBUG('apply-image-slop', err);
+      img.style.opacity       = '';
       img.style.pointerEvents = '';
       delete img.dataset.sfImgBlurred;
     }
@@ -702,7 +961,12 @@ function getPagePriorAdjustment() {
   const YT_DISCLOSURE_TEXT = 'Altered or synthetic content';
 
   function reportYoutubeBlock() {
+    // Proxy's injected.js handles counting when active — avoid double-counting.
+    if (document.documentElement.dataset.sfProxy === '1') return;
     chrome.runtime.sendMessage({ type: 'youtubeBlock' }).catch(() => {});
+    chrome.storage.session.get('youtubeBlocked').then(s => {
+      chrome.storage.session.set({ youtubeBlocked: (s.youtubeBlocked || 0) + 1 });
+    }).catch(() => {});
   }
 
   function getYtVideoCard(el) {
@@ -725,7 +989,7 @@ function getPagePriorAdjustment() {
     card.style.setProperty('filter', 'grayscale(0.7)', 'important');
     const badge = document.createElement('div');
     badge.className = 'sf-yt-feed-badge';
-    badge.textContent = '🤖 AI-disclosed';
+    badge.textContent = '>_ AI-DISCLOSED';
     card.style.position = 'relative';
     card.appendChild(badge);
     reportYoutubeBlock();
@@ -805,7 +1069,7 @@ function getPagePriorAdjustment() {
     overlay.className = 'sf-yt-overlay';
     const isShorts = location.pathname.startsWith('/shorts/');
     overlay.innerHTML =
-      '<div class="sf-yt-ov-icon">&#x1F916;</div>' +
+      '<div class="sf-yt-ov-icon"><span class="sf-icon-chev">&gt;</span><span class="sf-icon-cur">_</span></div>' +
       '<div class="sf-yt-ov-title">AI-Disclosed Content</div>' +
       '<div class="sf-yt-ov-sub">The creator has labeled this video as containing ' +
       'altered or synthetic (AI-generated) content.</div>' +
@@ -841,7 +1105,7 @@ function getPagePriorAdjustment() {
         ipr.videoDetails?.containsSyntheticMedia === true ||
         ipr.containsSyntheticMedia === true
       )) return true;
-    } catch (_) {}
+    } catch (err) { _SF_DEBUG('yt-synthetic-check', err); }
     return false;
   }
 
@@ -923,7 +1187,11 @@ function getPagePriorAdjustment() {
     if (!filterEnabled) return;
     for (const m of mutations) {
       for (const node of m.addedNodes) {
-        if (node.nodeType === 1) pendingNodes.add(node);
+        if (node.nodeType !== 1) continue;
+        // Block videos near placeholders SYNCHRONOUSLY — hover-autoplay fires
+        // immediately and cannot wait for the 300 ms batch window below.
+        blockVideosNear(node);
+        pendingNodes.add(node);
       }
     }
     if (pendingNodes.size && !scanQueued) {

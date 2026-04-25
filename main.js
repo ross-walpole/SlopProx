@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Ross Walpole <ross.walpole@gmail.com>
+// SPDX-License-Identifier: GPL-3.0-only
+
 const { app, BrowserWindow, Tray, Menu, ipcMain, shell, Notification } = require('electron');
 const { execSync, execFile } = require('child_process');
 const path = require('path');
@@ -13,6 +16,21 @@ const service          = require('./service');
 
 process.on('uncaughtException',  err => logger.logError(err));
 process.on('unhandledRejection', err => logger.logError(err));
+
+// ── Single-instance lock ──────────────────────────────────────────
+// A second launch (e.g. clicking the installer shortcut while already running)
+// just focuses the existing window and exits — prevents port conflicts on 8081/8083.
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.show();
+      mainWindow.focus();
+    }
+  });
+}
 
 // Suppress mockttp's own console.error for TLS handshake failures — our
 // tls-client-error handler already logs these via debugLog with proper context.
@@ -35,7 +53,7 @@ const SETTINGS_DEFAULTS = {
   defaultImageDetection: false,
   defaultYoutubeFilter:  true,
   imageModelsReady:      false,
-  PROXY_ENABLED:   true,
+  PROXY_ENABLED:   false,
   BYPASS_DOMAINS:  state.BYPASS_DOMAINS.slice(),
 };
 
@@ -257,6 +275,7 @@ function toggleImageDetection() {
 // ── Auto-updater ──────────────────────────────────────────────────
 autoUpdater.autoDownload             = true;
 autoUpdater.autoInstallOnAppQuit     = false;
+autoUpdater.allowPrerelease          = true;
 
 autoUpdater.on('update-available', info => {
   logger.debugLog(`Update available: v${info.version}`);
@@ -270,14 +289,22 @@ autoUpdater.on('update-downloaded', info => {
   safeSend('update-ready', info.version);
 });
 autoUpdater.on('error', err => {
-  logger.debugLog(`Updater: ${err?.message}`);
+  const msg = err?.message ?? '';
+  // A 404 from GitHub's releases API simply means no release has been published yet —
+  // treat it as "no update available" rather than a real error.
+  if (msg.includes('404') || msg.includes('Unable to find latest version')) {
+    logger.debugLog('Updater: no release found on GitHub — up to date');
+  } else {
+    logger.debugLog(`Updater error: ${msg}`);
+  }
 });
 
 // ── Window ────────────────────────────────────────────────────────
 function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 460, height: 720,
+    width: 560, height: 720,
     frame: false, resizable: false,
+    backgroundColor: '#080d09',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -308,7 +335,7 @@ function createWindow() {
 
     // Check for updates after UI is ready (packaged builds only)
     if (app.isPackaged)
-      setTimeout(() => autoUpdater.checkForUpdates(), 5000);
+      setTimeout(() => autoUpdater.checkForUpdates().catch(err => logger.debugLog(`Auto-update check failed: ${err?.message}`)), 5000);
   });
 
   mainWindow.on('close', e => {
@@ -355,6 +382,15 @@ app.whenReady().then(async () => {
   state.imagesBlocked     = savedCounts.imagesBlocked  || 0;
   state.youtubeBlocked    = savedCounts.youtubeBlocked || 0;
 
+  // Always sync extension source → userData on launch so CSS/JS updates are live
+  try {
+    const extDest = getExtDestPath();
+    if (fs.existsSync(path.join(extDest, 'manifest.json'))) {
+      fs.cpSync(path.join(__dirname, 'extension'), extDest, { recursive: true, force: true });
+      logger.debugLog('Extension files synced to userData');
+    }
+  } catch (e) { logger.logError(e); }
+
   // Set up paths
   certsDir   = path.join(userData, 'certs');
   caCertPath = path.join(certsDir, 'ca.pem');
@@ -392,6 +428,12 @@ app.whenReady().then(async () => {
 
   // Load the text classifier model
   classifier.loadModel(msg => safeSend('status-update', msg));
+
+  // When proxy is off there is no cert install, so nothing dismisses the startup
+  // overlay — send the ready signal ourselves after a short delay.
+  if (!state.PROXY_ENABLED) {
+    setTimeout(() => safeSend('cert-ready', true), 400);
+  }
 });
 
 // ── IPC handlers ──────────────────────────────────────────────────
@@ -447,6 +489,7 @@ function openLogWindow() {
     width: 900, height: 600,
     minWidth: 680, minHeight: 420,
     frame: false, resizable: true,
+    backgroundColor: '#000000',
     title: 'SlopProx — Debug Console',
     webPreferences: {
       preload: path.join(__dirname, 'preload-log.js'),
@@ -480,7 +523,9 @@ ipcMain.on('open-external', (_, url) => {
   if (typeof url === 'string' && /^https?:\/\//i.test(url)) shell.openExternal(url);
 });
 
+const _ALLOWED_SETTINGS = new Set(['launchAtStartup', 'minimizeToTray', 'PROXY_ENABLED', 'soundEnabled', 'filterEnabled', 'imageDetectionEnabled', 'youtubeFilterEnabled', 'autoStart']);
 ipcMain.on('set-setting', (_, { key, value }) => {
+  if (!key || !_ALLOWED_SETTINGS.has(key)) return;
   _saveSettings({ [key]: value });
   if (key === 'launchAtStartup') app.setLoginItemSettings({ openAtLogin: !!value, openAsHidden: true });
   if (key === 'minimizeToTray')  _minimizeToTray = !!value;
@@ -507,24 +552,36 @@ ipcMain.on('check-for-updates', () => {
 
   autoUpdater.checkForUpdates()
     .then(result => {
-      if (result.updateInfo) {
-        // Update available - events will be handled by existing listeners
+      // cancellationToken is only non-null when an update is available and actively downloading.
+      // updateInfo is always present (even when up-to-date), so it can't be used as the check.
+      if (result && result.cancellationToken != null) {
         logger.debugLog(`Update available: v${result.updateInfo.version}`);
+        // update-available event already fired and showed the banner;
+        // send complete so the manual-check button is re-enabled
+        safeSend('update-check-complete', { available: true, currentVersion: app.getVersion() });
       } else {
-        // No update available
         logger.debugLog('No updates available');
         safeSend('update-check-complete', { available: false, currentVersion: app.getVersion() });
       }
     })
     .catch(error => {
-      logger.logError(error);
-      safeSend('update-check-error', error.message || 'Failed to check for updates');
+      const msg = error?.message ?? '';
+      // 404 = no release published yet — treat as up-to-date, not an error
+      if (msg.includes('404') || msg.includes('Unable to find latest version')) {
+        logger.debugLog('Manual update check: no release on GitHub — up to date');
+        safeSend('update-check-complete', { available: false, currentVersion: app.getVersion() });
+      } else {
+        logger.logError(error);
+        safeSend('update-check-error', msg || 'Failed to check for updates');
+      }
     });
 });
 
+const _HOSTNAME_RE = /^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$/i;
 ipcMain.on('add-bypass', (_, hostname) => {
   if (!hostname || hostname === 'unknown-host') return;
   const cleanHost = hostname.toLowerCase().trim();
+  if (!_HOSTNAME_RE.test(cleanHost)) return;
   if (state.BYPASS_DOMAINS.includes(cleanHost)) return;
   state.BYPASS_DOMAINS.push(cleanHost);
   _saveSettings({ BYPASS_DOMAINS: state.BYPASS_DOMAINS });
@@ -534,7 +591,14 @@ ipcMain.on('add-bypass', (_, hostname) => {
   setTimeout(async () => {
     await proxy.start(certsDir);
     setSystemProxy(true); // re-write PAC URL to force WinINet to re-fetch with updated DIRECT entries
-    safeSend('status-update', `Bypass added — reopen ${cleanHost} to reconnect`);
+    safeSend('status-update', `Bypass added for ${cleanHost}`);
+    if (Notification.isSupported()) {
+      new Notification({
+        title: 'Bypass added — action required',
+        body: `${cleanHost} is now bypassed. Reload the page in your browser, or restart the app that was blocked.`,
+        icon: path.join(__dirname, 'icon.png'),
+      }).show();
+    }
   }, 800);
 });
 

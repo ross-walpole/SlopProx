@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Ross Walpole <ross.walpole@gmail.com>
+// SPDX-License-Identifier: GPL-3.0-only
+
 // classifier.js
 
 // Single source of truth for AI slop detection.
@@ -198,15 +201,27 @@ function getSlopScore(text) {
   const words = text.split(/\s+/).filter(w => w.length > 2);
   const avgLen = sentences.length ? words.length / sentences.length : 0;
 
-  // ── Structural uniformity (strongest non-phrase signal) ──────────
-  // Human writing varies sentence length; LLMs produce very uniform output.
+  // ── Academic text whitelist ───────────────────────────────────────
+  // Deduct before structural signals — academic prose has uniformly structured
+  // sentences and low burstiness by convention, not because it's AI-generated.
+  const citationNum    = (text.match(/\[\d+(?:,\s*\d+)*\]/g) || []).length;
+  const citationAuthor = (text.match(/\([A-Z][a-zA-Zé\-]+(?:\s+(?:&\s+)?[A-Z][a-zA-Zé\-]+)*,\s*\d{4}[a-z]?\)/g) || []).length;
+  const sectionHeads   = (text.match(/^(?:\d+\.)+\s+[A-Z]/gm) || []).length;
+  const totalCitations = citationNum + citationAuthor;
+  if      (totalCitations >= 4) score -= 10;
+  else if (totalCitations >= 2) score -= 6;
+  else if (totalCitations >= 1) score -= 3;
+  if (sectionHeads >= 2) score -= 3;
+
+  // ── Structural uniformity ──────────────────────────────────────────
+  // Weights reduced — uniform sentence structure is common in all professional
+  // writing, not just LLM output. Phrase signals are more discriminative.
   if (sentences.length > 6) {
     const lengths = sentences.map(s => s.split(/\s+/).length);
     const variance = lengths.reduce((a, b) => a + Math.pow(b - avgLen, 2), 0) / lengths.length;
-    if (variance < 100) score += 8;       // very uniform → strong LLM signal
-    else if (variance < 150) score += 4;
-    if (avgLen > 20 && avgLen < 38) score += 3; // typical LLM sentence length
-    if (Math.max(...lengths) - Math.min(...lengths) < 20) score += 4; // almost no range
+    if (variance < 100) score += 3;
+    else if (variance < 150) score += 1;
+    if (Math.max(...lengths) - Math.min(...lengths) < 20) score += 2;
   }
 
   // ── Short-text structural openers (2–5 sentences) ─────────────────
@@ -263,17 +278,15 @@ function getSlopScore(text) {
   if (uniqueRatio < 0.48) score += 4;
   if (uniqueRatio < 0.40) score += 3;
 
-  // ── Burstiness: human writing has high sentence-length variance ───
-  // LLMs produce suspiciously uniform sentence rhythm. Coefficient of
-  // variation (std/mean) < 0.35 on 4+ sentences is a strong LLM signal.
+  // ── Burstiness / coefficient of variation ────────────────────────
   if (sentences.length >= 4) {
     const lengths = sentences.map(s => s.split(/\s+/).length);
     const mean = lengths.reduce((a, b) => a + b, 0) / lengths.length;
     if (mean > 0) {
       const std = Math.sqrt(lengths.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / lengths.length);
-      const cv  = std / mean; // coefficient of variation
-      if (cv < 0.25) score += 6; // extremely uniform — strong LLM signal
-      else if (cv < 0.35) score += 3;
+      const cv  = std / mean;
+      if (cv < 0.25) score += 3;
+      else if (cv < 0.35) score += 1;
     }
   }
 
@@ -290,36 +303,31 @@ function getSlopScore(text) {
 // Full classification: heuristic + optional ML model. Returns confidence 0–1.
 //
 // Blending strategy:
-//   - When model is available, weight it at 55% (it's more reliable than heuristic
-//     alone for GPT-4/Claude style output, which doesn't always use clichés).
-//   - When BOTH signals agree (heuristic AND model both flag), use full blend.
-//   - When only ONE signal flags, apply a 0.85x reduction to reduce false positives.
-//     This keeps most borderline human writing (good article with 2 slop phrases)
-//     below the 0.48 threshold even if the heuristic is elevated.
-//   - When model is unavailable, heuristic alone requires a higher effective
-//     threshold (scaled down so 0.48 gate is harder to reach alone).
+//   - ML model leads at 70% weight — more calibrated than heuristic for clean
+//     GPT-4/Claude output that avoids clichés.
+//   - Heuristic contributes 30% as supporting evidence.
+//   - bothAgree boost (full blend): both heuristic > 0.50 AND model > 0.55.
+//   - modelStrong shortcut: model >= 0.80 alone triggers full blend.
+//   - Otherwise, 15% penalty applied to discourage borderline false positives.
+//   - Heuristic-only path (model unavailable): divisor /16 keeps the
+//     scale well-calibrated against the 0.45 service threshold.
 // Returns { confidence: 0–1, method: 'heuristic' | 'model' | 'model+heuristic' }
-//
-// method reflects what actually drove the decision:
-//   'heuristic'        — model unavailable or timed out; heuristic alone
-//   'model'            — model ran but heuristic was low; model dominated
-//   'model+heuristic'  — both signals fired and agreed; strongest signal
 async function isAiSlop(text) {
   if (text.length < 50) return { confidence: 0, method: 'heuristic' };
 
   const key = text.slice(0, 500);
   if (classificationCache.has(key)) return classificationCache.get(key);
 
-  const heuristicConf = Math.min(getSlopScore(text) / 9, 1.0);
+  // Divisor 16 matches classifier-heuristic.js in the Pro extension.
+  // Score 16/40 = max heuristic confidence — avoids saturation on professional prose.
+  const heuristicConf = Math.min(getSlopScore(text) / 16, 1.0);
   let confidence;
   let method = 'heuristic';
 
-  // Short-circuit: if the heuristic score is very low (< 0.12) the text is
-  // almost certainly not AI slop. Skip the 200–300 ms model call entirely —
-  // on content-heavy pages this saves inference on ~70% of paragraphs.
-  if (!isModelReady || !textClassifier || heuristicConf < 0.12) {
-    confidence = heuristicConf * 0.72;
-    const result = { confidence: Math.min(confidence, 1.0), method: 'heuristic' };
+  // Short-circuit: very low heuristic = almost certainly not slop.
+  // Saves model inference on the majority of paragraphs on content-heavy pages.
+  if (!isModelReady || !textClassifier || heuristicConf < 0.10) {
+    const result = { confidence: heuristicConf, method: 'heuristic' };
     classificationCache.set(key, result);
     return result;
   }
@@ -332,26 +340,24 @@ async function isAiSlop(text) {
       ]);
       if (result?.[0]) {
         const { label, score } = result[0];
-        const modelConf = (label === 'LABEL_1' || label.includes('fake')) ? score : (1 - score);
-        const blend = heuristicConf * 0.45 + modelConf * 0.55;
-        const bothAgree   = heuristicConf > 0.38 && modelConf > 0.52;
-        // When the model is highly confident on its own (≥ 0.80), skip the
-        // cross-signal penalty — clean AI text won't trigger the heuristic
-        // but the model should still be trusted.
+        const modelConf   = (label === 'LABEL_1' || label.includes('fake')) ? score : (1 - score);
+        // ML leads (70%) — more calibrated than heuristic for clean GPT-style text.
+        const blend       = heuristicConf * 0.30 + modelConf * 0.70;
+        const bothAgree   = heuristicConf > 0.50 && modelConf > 0.55;
         const modelStrong = modelConf >= 0.80;
-        confidence = (bothAgree || modelStrong) ? blend : blend * 0.82;
+        confidence = (bothAgree || modelStrong) ? blend : blend * 0.85;
         method = bothAgree ? 'model+heuristic' : 'model';
       } else {
-        confidence = heuristicConf * 0.72; // model timed out
+        confidence = heuristicConf; // model timed out — heuristic only
         method = 'heuristic';
       }
     } catch (err) {
       logError(err);
-      confidence = heuristicConf * 0.72;
+      confidence = heuristicConf;
       method = 'heuristic';
     }
   } else {
-    confidence = heuristicConf * 0.72;
+    confidence = heuristicConf;
     method = 'heuristic';
   }
 
@@ -415,7 +421,14 @@ const AI_SOURCE_MODEL_PATH = path.join(__dirname, 'models', 'ai-source-detector-
 // second network round-trip that the HuggingFace pipeline would make
 // internally if given a URL.
 
+const _PRIVATE_IP_RE = /^(127\.|0\.|10\.|192\.168\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.)|\[?(::1|fc00:|fd)/i;
+
 async function _fetchImageBuffer(url) {
+  let parsed;
+  try { parsed = new URL(url); } catch { throw new Error('Invalid image URL'); }
+  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') throw new Error('Non-HTTP URL blocked');
+  if (_PRIVATE_IP_RE.test(parsed.hostname) || parsed.hostname === 'localhost') throw new Error('Private IP blocked');
+
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 12000);
   try {
@@ -425,6 +438,97 @@ async function _fetchImageBuffer(url) {
   } finally {
     clearTimeout(timer);
   }
+}
+
+// ── C2PA manifest check ──────────────────────────────────────────
+// Content Credentials / C2PA embeds cryptographically signed provenance
+// metadata directly in the image file. Major AI platforms that embed it:
+//   - DALL-E 3 (via ChatGPT / Bing Image Creator) — contains 'openai'
+//   - Adobe Firefly — contains 'Adobe Firefly'
+//   - Google Imagen 3 — contains 'Imagen 3'
+//   - Microsoft Designer / Copilot — contains 'Microsoft'
+//
+// Detection strategy: scan the raw bytes for the JUMBF namespace marker
+// ('c2pa') which appears as ASCII in every C2PA manifest's description
+// box, then look for either the explicit AI-generation assertion label
+// ('c2pa.ai.generated') or a known AI generator identifier in the claim.
+//
+// Limitations:
+//   - Social media platforms (Reddit, Twitter, Discord) re-encode images
+//     on upload, stripping the manifest entirely. Coverage ≈ 1–5% of
+//     AI images in the wild, but when it fires it is zero-false-positive.
+//   - Midjourney and most SD pipelines do not embed C2PA at all.
+//   - PNG/WebP store JUMBF in different structures than JPEG APP11 but
+//     the label scan works across formats since labels are always ASCII.
+
+// ── AI image URL patterns ─────────────────────────────────────────
+// Checked before fetching the image — zero cost, high confidence.
+// Returns a score (0–1) on first match, or null if no match.
+
+const AI_IMAGE_URL_PATTERNS = [
+  { re: /oaidalleapiprodscus\.blob\.core\.windows\.net/i, score: 1.0 },
+  { re: /cdn\.openai\.com/i,                              score: 1.0 },
+  { re: /cdn\.midjourney\.com/i,                          score: 1.0 },
+  { re: /cdn\.discordapp\.com.*?midjourney/i,             score: 0.98 },
+  { re: /cdn\.leonardo\.ai/i,                             score: 1.0 },
+  { re: /cdn\.runwayml\.com|assets\.runwayml\.com/i,      score: 1.0 },
+  { re: /\bpika\.art\b/i,                                 score: 1.0 },
+  { re: /\bklingai\.com\b|\bkling\.ai\b/i,                score: 1.0 },
+  { re: /\bhailuoai\.com\b|\bminimaxi\.com\b/i,           score: 0.98 },
+  { re: /imagefx\.google\.com/i,                          score: 1.0 },
+  { re: /aisandbox-pa\.googleapis\.com/i,                 score: 1.0 },
+  { re: /\bblackforestlabs\.ai\b/i,                       score: 1.0 },
+  { re: /grok\.com\/(?:images|g\/gen)/i,                  score: 1.0 },
+  { re: /firefly\.adobe\.com/i,                           score: 0.98 },
+  { re: /ideogram\.ai/i,                                  score: 0.98 },
+  { re: /cdn\.stability\.ai/i,                            score: 0.98 },
+  { re: /app\.sora\.com/i,                                score: 0.98 },
+  { re: /bing\.com\/images\/create/i,                     score: 0.98 },
+  { re: /designer\.microsoft\.com/i,                      score: 0.98 },
+  { re: /images\.nightcafe\.studio/i,                     score: 0.98 },
+  { re: /image\.cdn2?\.seaart\.ai/i,                      score: 0.98 },
+  { re: /\bviggle\.ai\b/i,                                score: 0.97 },
+  { re: /playground\.com\/images\//i,                     score: 0.95 },
+  { re: /\btensor\.art\b/i,                               score: 0.95 },
+  { re: /getimg\.ai/i,                                    score: 0.95 },
+  { re: /civitai\.com/i,                                  score: 0.90 },
+];
+
+function _checkAiUrl(url) {
+  for (const { re, score } of AI_IMAGE_URL_PATTERNS) {
+    if (re.test(url)) return score;
+  }
+  return null;
+}
+
+// ── PNG tEXt/iTXt chunk AI signatures ────────────────────────────
+// AUTOMATIC1111, ComfyUI, NovelAI, InvokeAI, and Fooocus embed generation
+// parameters directly into PNG tEXt chunks as ASCII. These strings are
+// visible in the raw buffer and survive until the image is re-encoded.
+
+const _PNG_AI_PATTERNS = [
+  Buffer.from('Negative prompt:'),          // AUTOMATIC1111 / WebUI / Forge
+  Buffer.from('CFG scale:'),                // AUTOMATIC1111 SD parameters
+  Buffer.from('Model hash:'),               // AUTOMATIC1111 model reference
+  Buffer.from('KSampler'),                  // ComfyUI sampler node
+  Buffer.from('CheckpointLoaderSimple'),    // ComfyUI checkpoint node
+  Buffer.from('FluxGuidance'),              // ComfyUI Flux guidance node
+  Buffer.from('"software":"NovelAI"'),      // NovelAI Comment chunk
+  Buffer.from('invokeai_metadata'),         // InvokeAI iTXt chunk
+  Buffer.from('fooocus_version'),           // Fooocus metadata
+  Buffer.from('trainedAlgorithmicMedia'),   // IPTC AI-generated declaration
+  Buffer.from('SynthID'),                   // Google SynthID watermark declaration
+];
+
+const _PNG_SIG = Buffer.from([0x89, 0x50, 0x4E, 0x47]);
+
+// Returns 'ai_generated' | null
+function _checkPNGChunks(buf) {
+  if (!buf.slice(0, 4).equals(_PNG_SIG)) return null;
+  for (const pattern of _PNG_AI_PATTERNS) {
+    if (buf.includes(pattern)) return 'ai_generated';
+  }
+  return null;
 }
 
 // ── C2PA manifest check ──────────────────────────────────────────
@@ -733,9 +837,20 @@ function _getExifSignal(metadata) {
     const exifAscii = metadata.exif.toString('ascii');
 
     const AI_TAGS = [
-      'Stable Diffusion', 'ComfyUI', 'Automatic1111', 'InvokeAI', 'Fooocus',
-      'DALL-E', 'NovelAI', 'NightCafe', 'Midjourney', 'Adobe Firefly',
-      'Firefly generated', 'Imagen', 'Ideogram', 'Leonardo.Ai', 'Kling',
+      // Stable Diffusion ecosystem
+      'Stable Diffusion', 'StableDiffusion', 'stable-diffusion-webui', 'AUTOMATIC1111', 'Automatic1111',
+      'ComfyUI', 'InvokeAI', 'Fooocus', 'NovelAI', 'sd-webui', 'Forge',
+      // Major platforms
+      'DALL-E', 'Midjourney', 'Adobe Firefly', 'Firefly generated',
+      'Imagen', 'ImageFX', 'Ideogram', 'Leonardo.Ai', 'NightCafe',
+      // Newer generators
+      'Flux', 'FLUX.1', 'flux.1', 'black-forest-labs',
+      'RunwayML', 'Runway Gen', 'Pika Labs',
+      'Kling', 'Kling AI', 'Hailuo',
+      'Microsoft Designer', 'Microsoft Copilot',
+      'Sora',
+      // Watermark / provenance declarations
+      'SynthID', 'trainedAlgorithmicMedia',
     ];
 
     const HUMAN_TAGS = [
@@ -820,6 +935,15 @@ async function _runImageClassify(imageUrl) {
     return imageClassificationCache.get(cacheKey);
   }
 
+  // ── Pass 0: URL pattern check (zero-latency, zero-network) ───────
+  const urlScore = _checkAiUrl(imageUrl);
+  if (urlScore !== null) {
+    debugLog(`[URL] AI source domain confirmed — ${imageUrl.slice(0, 80)}`);
+    const result = { score: urlScore, style: 'unknown' };
+    imageClassificationCache.set(cacheKey, result);
+    return result;
+  }
+
   try {
     // ── Fetch once ────────────────────────────────────────────────
     const buf = await _fetchImageBuffer(imageUrl).catch(() => null);
@@ -830,6 +954,17 @@ async function _runImageClassify(imageUrl) {
       if (c2pa === 'ai_generated') {
         debugLog(`C2PA: AI-generation manifest confirmed — ${imageUrl.slice(0, 80)}`);
         const result = { score: 1.0, style: 'unknown' };
+        imageClassificationCache.set(cacheKey, result);
+        return result;
+      }
+    }
+
+    // ── Pass 1b: PNG tEXt/iTXt chunk AI signatures ────────────────
+    if (buf) {
+      const pngChunk = _checkPNGChunks(buf);
+      if (pngChunk === 'ai_generated') {
+        debugLog(`PNG chunks: AI generator parameters found — ${imageUrl.slice(0, 80)}`);
+        const result = { score: 0.99, style: 'unknown' };
         imageClassificationCache.set(cacheKey, result);
         return result;
       }

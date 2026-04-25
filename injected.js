@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Ross Walpole <ross.walpole@gmail.com>
+// SPDX-License-Identifier: GPL-3.0-only
+
 // injected.js
 
 (function () {
@@ -7,6 +10,11 @@
   if (window.top !== window.self) return;
   if (window.__sfLoaded) return;
   window.__sfLoaded = true;
+
+  // Signal to the browser extension's content.js (which runs in an isolated world
+  // and cannot see window.__sfLoaded) that the proxy is handling text classification.
+  // DOM attributes are shared across worlds, so this is the correct coordination mechanism.
+  document.documentElement.dataset.sfProxy = '1';
 
   const CLASSIFY_URL = '/__slop_filter_classify';
   const STATUS_URL   = '/__slop_filter_status';
@@ -18,7 +26,6 @@
 
   // Returns true if el is a div/span that contains substantial text but no
   // child block elements — i.e. it IS the text container, not a layout wrapper.
-  // This catches sites that render content directly in divs (SPAs, quiz sites, etc.)
   function isTextLeaf(el) {
     const tag = el.tagName;
     if (tag !== 'DIV' && tag !== 'SPAN' && tag !== 'SECTION') return false;
@@ -27,10 +34,8 @@
     }
     const text = (el.textContent || '').trim();
     if (text.length < MIN_LEN) return false;
-    // Skip CSS blobs — wiki templates and other sites inline CSS as text content
     if (/^\s*\.[\w-][\w-]*\s*\{/.test(text)) return false;
     if (text.includes('{font-style:') || text.includes('{display:') || text.includes(';word-wrap:')) return false;
-    // Skip pure navigation/UI chrome (no sentence-ending punctuation in first 120 chars)
     const sample = text.slice(0, 120);
     const wordCount = sample.split(/\s+/).length;
     if (wordCount < 8) return false;
@@ -43,9 +48,6 @@
   let ytBlockedHref = null;
 
   // ── Section-context injection ───────────────────────────────────
-  // Prepend the nearest preceding section heading to the text before
-  // sending it to the classifier. "References\n<citation text>" scores
-  // very differently than the citation alone — no hard-coded rules needed.
   function getClassifyText(el) {
     const content = el.textContent.trim().replace(/\s+/g, ' ');
     let node = el;
@@ -65,6 +67,189 @@
     return content;
   }
 
+  // ── Shared detect-row HTML (mirrors content.js _detectRowHtml) ──
+  function _detectRowHtml(label, confidence, method) {
+    return `<div class="sf-detect-row">
+      <span class="sf-detect-icon"><span class="sf-icon-chev">&gt;</span><span class="sf-icon-cur">_</span></span>
+      <span class="sf-detect-label">${label}</span>
+      <span class="sf-detect-conf">${confidence}%</span>
+      ${method ? `<span class="sf-detect-method">${method}</span>` : ''}
+    </div>`;
+  }
+
+  // ── Click-propagation guards (mirrors content.js installGuards) ──
+  function installGuards(placeholder) {
+    placeholder.addEventListener('mousedown', e => {
+      if (!e.target.closest('.sf-reveal-btn')) {
+        e.stopPropagation();
+        e.preventDefault();
+      }
+    }, true);
+    placeholder.addEventListener('click', e => {
+      e.stopPropagation();
+      if (!e.target.closest('.sf-reveal-btn')) e.preventDefault();
+    });
+  }
+
+  // ── Reveal button wiring (mirrors content.js _wireRevealBtn) ────
+  function _wireRevealBtn(placeholder, onReveal) {
+    let revealed = false;
+    const doReveal = (e) => {
+      if (revealed) return;
+      revealed = true;
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+      e.preventDefault();
+      onReveal();
+    };
+    const btn = placeholder.querySelector('.sf-reveal-btn');
+    btn.style.pointerEvents = 'auto';
+    btn.addEventListener('pointerup', doReveal);
+    btn.addEventListener('click',     doReveal);
+  }
+
+  // ── Card boundary detection (mirrors content.js findCardBoundary) ─
+  function findCardBoundary(el) {
+    let node = el.parentElement;
+    const viewportH = window.innerHeight;
+    let climbed = 0;
+
+    while (node && node !== document.body && climbed < 16) {
+      climbed++;
+
+      if (node.dataset.sfCardBlurred || node.dataset.sfRevealed) return null;
+
+      const tag  = node.tagName;
+      const role = (node.getAttribute('role') || '').toLowerCase();
+
+      if (/^(MAIN|BODY|HTML|HEADER|FOOTER|NAV)$/.test(tag)) break;
+      if (/^(main|navigation|banner|contentinfo)$/.test(role)) break;
+
+      const rect = node.getBoundingClientRect();
+      if (rect.width < 150 || rect.height < 50) { node = node.parentElement; continue; }
+      if (rect.height > viewportH * 0.85)        { node = node.parentElement; continue; }
+
+      const parentEl   = node.parentElement;
+      const parentRole = (parentEl?.getAttribute('role') || '').toLowerCase();
+
+      if (parentRole === 'feed') {
+        const peers = [...parentEl.children].filter(c => c !== node && c.offsetHeight > 40);
+        if (peers.length >= 1) return node;
+      }
+
+      if (tag === 'ARTICLE' || role === 'article' || role === 'listitem') {
+        const peers = [...(parentEl?.children || [])].filter(c => c !== node && c.offsetHeight > 40);
+        if (peers.length >= 1) return node;
+      }
+
+      if (tag.includes('-') && rect.height > 100) {
+        const peers = [...(parentEl?.children || [])].filter(c => c !== node && c.offsetHeight > 40);
+        if (peers.length >= 1) return node;
+      }
+
+      const cs            = getComputedStyle(node);
+      const hasBorder     = parseFloat(cs.borderTopWidth) >= 1 && cs.borderTopStyle !== 'none';
+      const hasShadow     = cs.boxShadow !== 'none' && cs.boxShadow !== '';
+      const hasBorderRadius = parseFloat(cs.borderRadius) > 4;
+
+      if ((hasBorder || hasShadow) && hasBorderRadius) {
+        const peers = [...(parentEl?.children || [])].filter(c => c !== node && c.offsetHeight > 40);
+        if (peers.length >= 1) return node;
+      }
+
+      if (role === 'feed') break;
+
+      node = node.parentElement;
+    }
+
+    return null;
+  }
+
+  // ── Card placeholder (mirrors content.js applyCardSlop) ─────────
+  function applyCardSlop(card, confidence, type, btnText, method) {
+    if (card.dataset.sfCardBlurred || card.dataset.sfRevealed) return;
+    card.dataset.sfCardBlurred = 'true';
+
+    try {
+      const rect         = card.getBoundingClientRect();
+      const savedDisplay = getComputedStyle(card).display;
+
+      const label = type === 'image' ? 'Suspected AI Image Post' : 'Suspected AI Generated Post';
+      const revealLabel = btnText || 'Show post';
+
+      const placeholder = document.createElement('div');
+      placeholder.className      = 'sf-card-placeholder';
+      placeholder._sfCard        = card;
+      placeholder._sfCardDisplay = savedDisplay === 'none' ? 'block' : savedDisplay;
+      placeholder.style.width  = rect.width  + 'px';
+      placeholder.style.height = Math.max(rect.height, 80) + 'px';
+
+      installGuards(placeholder);
+
+      placeholder.innerHTML = `
+        <div class="sf-card-inner">
+          ${_detectRowHtml(label, confidence, method)}
+          <button class="sf-reveal-btn" type="button">${revealLabel}</button>
+        </div>`;
+
+      _wireRevealBtn(placeholder, () => {
+        card.style.display = placeholder._sfCardDisplay;
+        delete card.dataset.sfCardBlurred;
+        card.dataset.sfRevealed = 'true';
+        placeholder.remove();
+      });
+
+      card.style.display = 'none';
+      card.insertAdjacentElement('afterend', placeholder);
+    } catch (err) { _sfDebug('apply-card-slop', err); }
+  }
+
+  // ── Text placeholder ─────────────────────────────────────────────
+  function applySlop(el, confidence, method) {
+    // Guard: concurrent card classification may have already hidden the card.
+    if (el.closest('[data-sf-card-blurred]')) return;
+
+    const card = findCardBoundary(el);
+    if (card) { applyCardSlop(card, confidence, 'text', undefined, method); return; }
+
+    if (el.dataset.slopBlurred) return;
+    try {
+      el.dataset.slopBlurred = 'true';
+      el.classList.add('sf-content'); // display:none via CSS
+
+      const placeholder = document.createElement('div');
+      placeholder.className = 'sf-text-placeholder';
+      placeholder._sfEl = el;
+      installGuards(placeholder);
+
+      placeholder.innerHTML = `
+        <div class="sf-text-inner">
+          ${_detectRowHtml('Suspected AI Text', confidence, method)}
+          <button class="sf-reveal-btn" type="button">Show text</button>
+        </div>`;
+
+      // When el is a <li>, a bare <div> sibling is invalid HTML — browsers
+      // may hoist it out of the list and render it in the wrong position.
+      const toInsert = el.tagName === 'LI'
+        ? Object.assign(document.createElement('li'), { style: 'list-style:none' })
+        : placeholder;
+      if (toInsert !== placeholder) toInsert.appendChild(placeholder);
+
+      _wireRevealBtn(placeholder, () => {
+        el.classList.remove('sf-content');
+        delete el.dataset.slopBlurred;
+        toInsert.replaceWith(el);
+      });
+
+      el.parentNode.insertBefore(toInsert, el);
+    } catch (err) { _sfDebug('apply-text-slop', err); }
+  }
+
+  // ── Minimal debug logger ─────────────────────────────────────────
+  function _sfDebug(ctx, err) {
+    console.debug(`[sf:${ctx}]`, err?.message ?? err);
+  }
+
   // ── Status polling ──────────────────────────────────────────────
   async function pollStatus() {
     try {
@@ -72,7 +257,6 @@
       const data = await r.json();
       const { enabled, youtubeFilterEnabled: ytEnabled } = data;
       if (filterEnabled && !enabled) {
-        // Filter turned off: restore all hidden elements and stop watching
         document.querySelectorAll('.sf-content').forEach(el => el.classList.remove('sf-content'));
         document.querySelectorAll('.sf-text-placeholder').forEach(el => el.remove());
         observer.disconnect();
@@ -80,14 +264,10 @@
       }
       filterEnabled = enabled;
       if (typeof ytEnabled === 'boolean') youtubeFilterEnabled = ytEnabled;
-    } catch (_) {}
+    } catch (err) { _sfDebug('poll-status', err); }
   }
 
   // ── YouTube AI-label filter ─────────────────────────────────────
-  // Detects YouTube's mandatory "Altered or synthetic content" AI disclosure
-  // and shows a warning banner before the player on watch pages, and dims
-  // feed cards where the label is present.
-
   const YT_DISCLOSURE_TEXT = 'Altered or synthetic content';
   const REPORT_URL = '/__slop_filter_youtube';
 
@@ -95,11 +275,9 @@
     fetch(REPORT_URL, { method: 'POST', signal: AbortSignal.timeout(800) }).catch(() => {});
   }
 
-  // Find the closest video card ancestor for a disclosure element in the feed.
   function getVideoCard(el) {
     let node = el;
     while (node && node !== document.body) {
-      // YouTube uses <ytd-*-renderer> custom elements as card roots
       if (node.tagName && node.tagName.toLowerCase().startsWith('ytd-') &&
           (node.tagName.toLowerCase().includes('grid') ||
            node.tagName.toLowerCase().includes('compact') ||
@@ -120,7 +298,7 @@
 
     const badge = document.createElement('div');
     badge.className = 'sf-yt-feed-badge';
-    badge.textContent = '🤖 AI-disclosed';
+    badge.textContent = '>_ AI-disclosed';
     card.style.position = 'relative';
     card.appendChild(badge);
     reportYoutubeBlock();
@@ -180,7 +358,7 @@
     overlay.id = 'sf-yt-overlay';
     overlay.className = 'sf-yt-overlay';
     overlay.innerHTML =
-      '<div class="sf-yt-ov-icon">&#x1F916;</div>' +
+      '<div class="sf-yt-ov-icon"><span class="sf-icon-chev">&gt;</span><span class="sf-icon-cur">_</span></div>' +
       '<div class="sf-yt-ov-title">AI-Disclosed Content</div>' +
       '<div class="sf-yt-ov-sub">The creator has labeled this video as containing ' +
       'altered or synthetic (AI-generated) content.</div>' +
@@ -211,8 +389,6 @@
     reportYoutubeBlock();
   }
 
-  // Check ytInitialPlayerResponse (populated synchronously on watch pages before
-  // the first paint — safe to read at DOMContentLoaded or later).
   function checkYtInitialData() {
     try {
       const ipr = window.ytInitialPlayerResponse;
@@ -221,11 +397,10 @@
         ipr.containsSyntheticMedia === true ||
         ipr.playerConfig?.audioConfig?.containsSyntheticMedia === true
       )) return true;
-    } catch (_) {}
+    } catch (err) { _sfDebug('yt-synthetic-check', err); }
     return false;
   }
 
-  // Walk text nodes looking for the disclosure string.
   function findDisclosureNode() {
     const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
     let node;
@@ -241,13 +416,11 @@
 
     const isWatchPage = /[?&]v=/.test(location.search) || location.pathname.startsWith('/shorts/');
 
-    // Watch page: check initial data first, then DOM
     if (isWatchPage) {
       if (checkYtInitialData()) { showWatchPageBanner(); return; }
       const node = findDisclosureNode();
       if (node) { showWatchPageBanner(); return; }
     } else {
-      // Feed / search / channel pages: look for disclosure text in any card
       const node = findDisclosureNode();
       if (node) {
         const card = getVideoCard(node.parentElement);
@@ -256,30 +429,66 @@
     }
   }
 
-  // Returns true if the text looks like an inline CSS blob.
-  // Checked regardless of where in the string the CSS appears (e.g. after a "^" reference prefix).
   function isCssBlob(text) {
     if (text.includes('{font-style:') || text.includes('{display:') || text.includes(';word-wrap:')) return true;
     if (/\.[\w-][\w-]*\s*\{/.test(text)) return true;
-    // More than 4 CSS property:value pairs signals a style block
     const pairs = (text.match(/[\w-]+\s*:\s*[\w#%(),.-]+/g) || []).length;
     return pairs > 4;
   }
 
-  // Returns true if the element is inside a structural chrome region that should
-  // never be classified — dialogs, status regions, and landmark nav elements.
   function isChrome(el) {
     return !!el.closest('[role="dialog"], [role="alert"], [role="status"], [role="navigation"]');
+  }
+
+  // ── Card-level classification (checks if the element's post card is slop) ──
+  function looksLikePostCard(el) {
+    const rect = el.getBoundingClientRect();
+    if (rect.width < 200 || rect.height < 80) return false;
+    const tag  = el.tagName;
+    const role = (el.getAttribute('role') || '').toLowerCase();
+    if (tag === 'ARTICLE' || role === 'article' || role === 'listitem') return true;
+    if (tag.includes('-') && rect.height > 100) return true;
+    const cs = getComputedStyle(el);
+    const hasBorder = parseFloat(cs.borderTopWidth) >= 1 && cs.borderTopStyle !== 'none';
+    const hasShadow = cs.boxShadow !== 'none' && cs.boxShadow !== '';
+    const hasBorderRadius = parseFloat(cs.borderRadius) > 4;
+    return (hasBorder || hasShadow) && hasBorderRadius;
+  }
+
+  async function classifyCardText(card) {
+    if (!filterEnabled || card.dataset.sfCardBlurred || card.dataset.sfRevealed || card.dataset.sfCardChecked) return;
+    card.dataset.sfCardChecked = 'true';
+    const raw = (card.innerText || card.textContent || '');
+    const lines = raw.split('\n').map(l => l.trim()).filter(l => l.length >= 45);
+    const text = lines.join(' ').replace(/\s+/g, ' ').trim();
+    if (text.length < MIN_LEN) return;
+    try {
+      const r = await fetch(CLASSIFY_URL, {
+        method: 'POST',
+        body: text,
+        headers: { 'Content-Type': 'text/plain' },
+        signal: AbortSignal.timeout(10000),
+      });
+      if (!r.ok) return;
+      const { isSlop, confidence, method } = await r.json();
+      if (isSlop) applyCardSlop(card, confidence, 'text', undefined, method);
+    } catch (err) { _sfDebug('classify-card', err); }
+  }
+
+  function _scanCardsIn(root) {
+    if (looksLikePostCard(root)) { classifyCardText(root); return; }
+    const candidates = root.querySelectorAll?.('article, [role="article"], [role="listitem"], [role="feed"] > *');
+    if (candidates) for (const el of candidates) { if (looksLikePostCard(el)) classifyCardText(el); }
   }
 
   // ── Classify a single element via the proxy relay endpoint ──────
   async function classify(el) {
     if (!filterEnabled || el.dataset.slopChecked) return;
+    if (el.closest('[data-sf-card-blurred]')) return;
 
     const content = el.textContent.trim().replace(/\s+/g, ' ');
     if (content.length < MIN_LEN) return;
 
-    // Skip CSS blobs and UI chrome before hitting the network
     if (isCssBlob(content) || isChrome(el)) return;
 
     el.dataset.slopChecked = 'true';
@@ -294,47 +503,7 @@
       if (!r.ok) return;
       const { isSlop, confidence, method } = await r.json();
       if (isSlop) applySlop(el, confidence, method);
-    } catch (_) {}
-  }
-
-  function applySlop(el, confidence, method) {
-    if (el.dataset.slopBlurred) return;
-    try {
-      el.dataset.slopBlurred = 'true';
-      el.classList.add('sf-content'); // display:none via CSS
-
-      const placeholder = document.createElement('div');
-      placeholder.className = 'sf-text-placeholder';
-
-      placeholder.innerHTML = `
-        <div class="sf-text-inner">
-          <div class="sf-detect-row">
-            <span class="sf-detect-icon">&#x1F916;</span>
-            <span class="sf-detect-label">Suspected AI Text</span>
-            <span class="sf-detect-conf">${confidence}%</span>
-            ${method ? `<span class="sf-detect-method">${method}</span>` : ''}
-          </div>
-          <button class="sf-reveal-btn" type="button">Show text</button>
-        </div>`;
-
-      let revealed = false;
-      const doReveal = (e) => {
-        if (revealed) return;
-        revealed = true;
-        e.stopPropagation();
-        e.stopImmediatePropagation();
-        e.preventDefault();
-        el.classList.remove('sf-content');
-        delete el.dataset.slopBlurred;
-        placeholder.remove();
-      };
-
-      const btn = placeholder.querySelector('.sf-reveal-btn');
-      btn.addEventListener('pointerup', doReveal);
-      btn.addEventListener('click',     doReveal);
-
-      el.parentNode.insertBefore(placeholder, el);
-    } catch (_) {}
+    } catch (err) { _sfDebug('classify', err); }
   }
 
   // ── MutationObserver: handles SPAs + infinite-scroll feeds ──────
@@ -355,11 +524,11 @@
         pendingNodes.clear();
         scanQueued = false;
         for (const node of nodes) {
+          _scanCardsIn(node);
           const els = node.matches?.(SELECTORS)
             ? [node]
             : [...node.querySelectorAll(SELECTORS)];
           for (const el of els) await classify(el);
-          // Also check leaf divs/spans for sites that don't use semantic elements
           if (isTextLeaf(node)) { await classify(node); }
           else for (const el of (node.querySelectorAll?.('div, span, section') || [])) {
             if (isTextLeaf(el)) await classify(el);
@@ -372,11 +541,9 @@
   observer.observe(document.body, { childList: true, subtree: true });
 
   // ── MutationObserver: re-run YouTube check when new content loads ──
-  // YouTube is a SPA and loads description / feed cards asynchronously.
   let ytCheckQueued = false;
   const ytObserver = new MutationObserver(() => {
     if (!youtubeFilterEnabled || !location.hostname.includes('youtube.com')) return;
-    // If the URL changed since we blocked, clear the overlay immediately
     if (ytBlockedHref && ytBlockedHref !== location.href) {
       cleanupYtBlock();
     }
@@ -392,6 +559,8 @@
     const prevContainer = getYtPlayerContainer();
     if (prevContainer) delete prevContainer.dataset.sfYtAllowed;
     setTimeout(() => {
+      document.querySelectorAll('article, [role="article"], [role="listitem"], [role="feed"] > *')
+        .forEach(el => { if (looksLikePostCard(el)) classifyCardText(el); });
       document.querySelectorAll(SELECTORS).forEach(classify);
       document.querySelectorAll('div, span, section').forEach(el => { if (isTextLeaf(el)) classify(el); });
       runYoutubeCheck();
@@ -408,6 +577,8 @@
   pollStatus();
 
   setTimeout(() => {
+    document.querySelectorAll('article, [role="article"], [role="listitem"], [role="feed"] > *')
+      .forEach(el => { if (looksLikePostCard(el)) classifyCardText(el); });
     document.querySelectorAll(SELECTORS).forEach(classify);
     document.querySelectorAll('div, span, section').forEach(el => { if (isTextLeaf(el)) classify(el); });
     runYoutubeCheck();
