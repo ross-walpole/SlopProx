@@ -24,9 +24,7 @@
     "publish": {
       "provider": "github",
       "owner": "ross-walpole",
-      "repo": "SlopProx",
-      "private": true,
-      "token": "${GH_TOKEN}"
+      "repo": "SlopProx"
     },
     "asarUnpack": [
       "**/node_modules/sharp/**"
