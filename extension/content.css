@@ -6,7 +6,7 @@
 .sf-card-placeholder, .sf-text-placeholder, .sf-img-placeholder,
 .sf-detect-label, .sf-detect-conf, .sf-detect-method, .sf-detect-icon,
 .sf-reveal-btn, .sf-yt-overlay, .sf-yt-feed-badge {
-  font-family: 'JetBrains Mono', 'Cascadia Code', Consolas, 'Courier New', monospace !important;
+  font-family: 'Cascadia Code', 'Fira Code', Consolas, 'Courier New', monospace !important;
   box-sizing: border-box !important;
   line-height: normal !important;
 }

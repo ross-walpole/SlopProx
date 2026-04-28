@@ -25,11 +25,9 @@
   adsCount.textContent  = '—'; // updated from /status below
 
   try {
-    const r = await fetch('http://127.0.0.1:8083/status', {
-      signal: AbortSignal.timeout(800),
-    });
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    const data = await r.json();
+    const resp = await chrome.runtime.sendMessage({ type: 'status' });
+    if (!resp?.ok) throw new Error('no response');
+    const data = resp.data;
 
     dot.className   = 'status-dot ' + (data.enabled ? 'on' : 'off');
     statusLabel.textContent = data.enabled ? 'LIVE' : 'PAUSED';
