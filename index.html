@@ -102,8 +102,8 @@
       box-shadow: 0 0 6px rgba(109,184,138,0.35);
     }
 
-    @keyframes spin { to { transform: rotate(360deg); } }
-    .spinner { animation: spin 0.8s linear infinite; display: inline-block; }
+    @keyframes ring-spin { to { transform: rotate(360deg); } }
+    .ring-spinner { animation: ring-spin 1s linear infinite; display: block; }
 
     @keyframes digitIn {
       from { transform: translateY(35%); opacity: 0; }
@@ -271,7 +271,10 @@
   <div id="initOverlay"
        style="top:64px"
        class="fixed inset-x-0 bottom-0 bg-t z-40 flex flex-col items-center justify-center gap-4 transition-opacity duration-300">
-    <div class="text-[28px] spinner text-g" id="overlaySpinner" style="text-shadow:0 0 16px rgba(109,184,138,0.5)">⟳</div>
+    <svg id="overlaySpinner" class="ring-spinner" viewBox="0 0 44 44" width="44" height="44" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <circle cx="22" cy="22" r="17" fill="none" stroke="rgba(109,184,138,0.12)" stroke-width="2.5"/>
+      <circle cx="22" cy="22" r="17" fill="none" stroke="#6db88a" stroke-width="2.5" stroke-dasharray="28 79" stroke-linecap="round" style="filter:drop-shadow(0 0 6px rgba(109,184,138,0.5))"/>
+    </svg>
     <div class="text-gb font-bold text-[13px] tracking-widest" id="overlayTitle">STARTING UP</div>
     <div class="text-g text-[10px] text-center px-10 leading-relaxed tracking-wide" id="overlayStatus">Starting up…</div>
     <button id="overlayRetry"
@@ -539,7 +542,10 @@
 
       <div class="step active" id="step1">
         <div class="text-center py-2">
-          <div class="text-[28px] mb-3 text-g spinner" style="text-shadow:0 0 10px rgba(109,184,138,0.4)">⟳</div>
+          <svg class="ring-spinner mx-auto mb-3" viewBox="0 0 44 44" width="36" height="36" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+            <circle cx="22" cy="22" r="17" fill="none" stroke="rgba(109,184,138,0.12)" stroke-width="2.5"/>
+            <circle cx="22" cy="22" r="17" fill="none" stroke="#6db88a" stroke-width="2.5" stroke-dasharray="28 79" stroke-linecap="round" style="filter:drop-shadow(0 0 5px rgba(109,184,138,0.4))"/>
+          </svg>
           <div class="text-gb font-semibold text-[12px] mb-2 tracking-wide" id="step1Title">Opening browser…</div>
           <p class="text-g text-[10px] leading-relaxed mb-4">
             Your browser is opening. Copy the address below and<br>
