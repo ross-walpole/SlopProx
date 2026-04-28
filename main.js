@@ -332,6 +332,11 @@ function createWindow() {
     if (state.IMAGE_DETECTION_ENABLED && !classifier.isImageModelReady())
       _startImageModelLoad();
 
+    // Proxy-off case: nothing else sends cert-ready, so fire it here once the
+    // renderer is guaranteed to be listening. Proxy-on case is handled by installCert().
+    if (!state.PROXY_ENABLED)
+      setTimeout(() => safeSend('cert-ready', true), 100);
+
     if (app.isPackaged)
       setTimeout(() => autoUpdater.checkForUpdates().catch(err => logger.debugLog(`Auto-update check failed: ${err?.message}`)), 5000);
   });
@@ -420,12 +425,6 @@ app.whenReady().then(async () => {
 
   service.start(safeSend);
   classifier.loadModel(msg => safeSend('status-update', msg));
-
-  // When proxy is off there is no cert install, so nothing dismisses the startup
-  // overlay — send the ready signal ourselves after a short delay.
-  if (!state.PROXY_ENABLED) {
-    setTimeout(() => safeSend('cert-ready', true), 400);
-  }
 });
 
 // ── IPC handlers ──────────────────────────────────────────────────
