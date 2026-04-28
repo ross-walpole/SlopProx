@@ -55,7 +55,7 @@ npm start         # Electron dev mode
 npm run build     # builds NSIS installer → dist/
 ```
 
-The three image models (~220 MB total) download automatically from HuggingFace on first enable and are cached locally.
+The ONNX text model (~84 MB) is bundled via Git LFS. Two of the three image models (~140 MB total) download from HuggingFace on first enable and are cached locally.
 
 ### Project structure
 
