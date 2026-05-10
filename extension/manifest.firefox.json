@@ -4,15 +4,16 @@
   "version": "1.0.0",
   "description": "Detects and hides AI-generated text, images, and YouTube videos as you browse. All processing stays on your machine.",
   "homepage_url": "https://slopprox.com",
-  "permissions": ["storage", "declarativeNetRequest", "declarativeNetRequestFeedback"],
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "slopprox@slopprox.com",
+      "strict_min_version": "109.0"
+    }
+  },
+  "permissions": ["storage"],
   "host_permissions": [
     "http://127.0.0.1:8083/*"
   ],
-  "declarative_net_request": {
-    "rule_resources": [
-      { "id": "ad-block", "enabled": true, "path": "ad-rules.json" }
-    ]
-  },
   "icons": {
     "16":  "icons/icon-16.png",
     "48":  "icons/icon-48.png",
@@ -27,7 +28,8 @@
     }
   ],
   "background": {
-    "service_worker": "background.js"
+    "scripts": ["background.js"],
+    "type": "module"
   },
   "action": {
     "default_popup": "popup.html",

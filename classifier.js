@@ -6,13 +6,66 @@
 // Single source of truth for AI slop detection.
 // Used by both proxy.js (heuristic-only, server-side) and service.js (full ML + heuristic).
 
-const path  = require('path');
-const os    = require('os');
-const sharp = require('sharp');
+const path   = require('path');
+const os     = require('os');
+const fs     = require('fs');
+const crypto = require('crypto');
+const sharp  = require('sharp');
 const { logError, debugLog } = require('./logger');
+const config = require('./config');
+
+// ── Model integrity verification ─────────────────────────────────
+// SHA256 hashes of the quantized ONNX files for Models B and C.
+// Set to null to skip verification (first run / hash not yet pinned).
+// After first download, hashes are logged — pin them here for subsequent releases.
+const KNOWN_MODEL_HASHES = {
+  'onnx-community/SMOGY-Ai-images-detector-ONNX':    'ea91833531059e3f24997b07c88569c3b0922d56a405d0976ec5a175240c974b',
+  'onnx-community/Deep-Fake-Detector-v2-Model-ONNX': '3519c22b9695f99ddc00821228eeac91239065a90bfbdb4917858b3ec1dcfc42',
+};
+
+async function _verifyAndLogModelFiles(modelCacheDir, modelId) {
+  try {
+    if (!fs.existsSync(modelCacheDir)) return;
+    const onnxFiles = fs.readdirSync(modelCacheDir).filter(f => f.endsWith('.onnx'));
+    for (const f of onnxFiles) {
+      const filePath = path.join(modelCacheDir, f);
+      // Stream-hash instead of readFileSync — avoids blocking the event loop for ~50–90 MB ONNX files.
+      const hash = await new Promise((resolve, reject) => {
+        const h = crypto.createHash('sha256');
+        const stream = fs.createReadStream(filePath);
+        stream.on('error', reject);
+        stream.on('data', chunk => h.update(chunk));
+        stream.on('end', () => resolve(h.digest('hex')));
+      });
+      const expected = KNOWN_MODEL_HASHES[modelId];
+      if (expected === null) {
+        debugLog(`[ModelIntegrity] ${modelId}/${f} SHA256=${hash} (not yet pinned)`);
+      } else if (hash !== expected) {
+        fs.unlinkSync(filePath);
+        throw new Error(`Model integrity check FAILED for ${modelId}/${f} — file removed. Expected ${expected.slice(0,16)}… got ${hash.slice(0,16)}…`);
+      } else {
+        debugLog(`[ModelIntegrity] ${modelId}/${f} OK`);
+      }
+    }
+  } catch (err) {
+    if (err.message?.includes('integrity check FAILED')) throw err;
+    logError(err);
+  }
+}
 
 let isModelReady = false;
 let textClassifier = null;
+
+// ── Text Model 2 ─────────────────────────────────────────────────
+// Second independent text classifier trained on different data.
+// Loaded in the background after Model 1 is ready.
+// Different training distribution gives genuine independent vote — the
+// ensemble only boosts confidence when both models agree.
+let textClassifier2 = null;
+let isModel2Ready = false;
+let _textModel2RetryTimer = null;
+const MODEL2_ID    = 'onnx-community/e5-small-lora-ai-generated-detector-ONNX';
+const MODEL2_LABEL = 'AI text detector v2 (E5-small LoRA)';
 
 class LRUCache {
   constructor(maxSize) {
@@ -71,6 +124,9 @@ let modelCClassifier = null;
 let _isModelCReady = false;
 const MODEL_C_ID    = 'onnx-community/Deep-Fake-Detector-v2-Model-ONNX';
 const MODEL_C_LABEL = 'Deepfake & synthetic image detector';
+
+let _modelBRetryTimer = null;
+let _modelCRetryTimer = null;
 
 // Model D slot — reserved for a future anime/illustration specialist.
 // Currently disabled: no BEiT or suitable anime-specific ONNX model is
@@ -176,6 +232,20 @@ const SLOP_PHRASES = [
   'plays a crucial role',
   'plays a pivotal role',
   'in recent years,',
+  // Gerund/variant forms missing from original list
+  'navigating the complexities',
+  'fostering genuine',
+  'fostering authentic',
+  'fostering a culture',
+  'competitive landscape',
+  'moving forward in',
+  'the game-changer is',
+  'it is paramount',
+  'the bottom line:',
+  'what truly matters',
+  'thrilled to be',
+  'excited to share',
+  'excited to announce',
 ];
 
 // Pre-compile phrase regexes once at module load — avoids ~116 RegExp constructions
@@ -200,6 +270,8 @@ function getSlopScore(text) {
   const sentences = safeText.split(/[.!?]+/).filter(s => s.trim().length > 8);
   const words = text.split(/\s+/).filter(w => w.length > 2);
   const avgLen = sentences.length ? words.length / sentences.length : 0;
+  // Shared across structural-uniformity and burstiness checks below.
+  const lengths = sentences.map(s => s.split(/\s+/).length);
 
   // ── Academic text whitelist ───────────────────────────────────────
   // Deduct before structural signals — academic prose has uniformly structured
@@ -217,7 +289,6 @@ function getSlopScore(text) {
   // Weights reduced — uniform sentence structure is common in all professional
   // writing, not just LLM output. Phrase signals are more discriminative.
   if (sentences.length > 6) {
-    const lengths = sentences.map(s => s.split(/\s+/).length);
     const variance = lengths.reduce((a, b) => a + Math.pow(b - avgLen, 2), 0) / lengths.length;
     if (variance < 100) score += 3;
     else if (variance < 150) score += 1;
@@ -242,12 +313,12 @@ function getSlopScore(text) {
   }
 
   // ── Human-content whitelist — reduce score for signals of real writing ──
-  // URLs, code, @mentions, and hashtags are strong indicators of human-authored
-  // social/technical content. Apply a penalty so a single slop phrase doesn't
-  // tip the score on a tweet, GitHub comment, or Stack Overflow answer.
+  // URLs, @mentions, and code blocks are reliable human signals — AI-generated
+  // social posts almost never include these. Hashtags are NOT included: AI posts
+  // on LinkedIn/Twitter routinely append #Leadership #Growth etc., so counting
+  // them as a human signal causes false negatives on AI content.
   const humanSignals = (text.match(/https?:\/\/\S+/g) || []).length          // URLs
     + (text.match(/@[\w]+/g) || []).length                                    // @mentions
-    + (text.match(/#[\w]+/g) || []).length                                    // hashtags
     + (text.match(/```[\s\S]*?```|`[^`]+`/g) || []).length;                   // code blocks
   if (humanSignals >= 2) score -= 6;
   else if (humanSignals >= 1) score -= 3;
@@ -280,7 +351,6 @@ function getSlopScore(text) {
 
   // ── Burstiness / coefficient of variation ────────────────────────
   if (sentences.length >= 4) {
-    const lengths = sentences.map(s => s.split(/\s+/).length);
     const mean = lengths.reduce((a, b) => a + b, 0) / lengths.length;
     if (mean > 0) {
       const std = Math.sqrt(lengths.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / lengths.length);
@@ -297,70 +367,170 @@ function getSlopScore(text) {
   if (/\bin conclusion[,.]?\s/i.test(text) || /\bto summarize[,.]?\s/i.test(text)) score += 4;
   if (/\bhope (this|you found this)\b/i.test(text)) score += 3;
 
-  return Math.min(score, 40);
+  return Math.max(0, Math.min(score, 40));
 }
 
-// Full classification: heuristic + optional ML model. Returns confidence 0–1.
+// ── Stylometric signal ────────────────────────────────────────────
+// Two pure-JS signals orthogonal to phrase-matching and ML classification.
 //
-// Blending strategy:
-//   - ML model leads at 70% weight — more calibrated than heuristic for clean
-//     GPT-4/Claude output that avoids clichés.
-//   - Heuristic contributes 30% as supporting evidence.
-//   - bothAgree boost (full blend): both heuristic > 0.50 AND model > 0.55.
-//   - modelStrong shortcut: model >= 0.80 alone triggers full blend.
-//   - Otherwise, 15% penalty applied to discourage borderline false positives.
-//   - Heuristic-only path (model unavailable): divisor /16 keeps the
-//     scale well-calibrated against the 0.45 service threshold.
-// Returns { confidence: 0–1, method: 'heuristic' | 'model' | 'model+heuristic' }
-async function isAiSlop(text) {
-  if (text.length < 50) return { confidence: 0, method: 'heuristic' };
+// 1. Inter-sentence Jaccard similarity: LLMs produce locally cohesive prose
+//    where adjacent sentences share vocabulary at ~12-25% overlap. Human
+//    writing is burstier: ~5-12%. Measured on word sets (words > 3 chars).
+//
+// 2. Opener repetition: LLMs reuse the same 1-2 word sentence starters
+//    within a block ("The", "This", "In", "It"). Human writers vary openers.
+//
+// Returns 0–1 (higher = more AI-like), or null for text with < 4 sentences.
+function getStylometricScore(text) {
+  const safeText = text.replace(
+    /\b(Mr|Mrs|Ms|Dr|Prof|Sr|Jr|vs|etc|e\.g|i\.e|U\.S)\./gi,
+    '$1․'
+  );
+  const sentences = safeText
+    .split(/[.!?]+/)
+    .map(s => s.trim())
+    .filter(s => s.split(/\s+/).length >= 3);
 
-  const key = text.slice(0, 500);
+  if (sentences.length < 4) return null;
+
+  const wordSets = sentences.map(s =>
+    new Set(s.toLowerCase().replace(/[^a-z\s]/g, '').split(/\s+/).filter(w => w.length > 3))
+  );
+
+  let jaccardSum = 0, jaccardCount = 0;
+  for (let i = 0; i < wordSets.length - 1; i++) {
+    const a = wordSets[i], b = wordSets[i + 1];
+    if (a.size === 0 || b.size === 0) continue;
+    const inter = [...a].filter(w => b.has(w)).length;
+    jaccardSum += inter / (a.size + b.size - inter);
+    jaccardCount++;
+  }
+  const avgJaccard = jaccardCount > 0 ? jaccardSum / jaccardCount : 0;
+
+  const openers = sentences.map(s => s.split(/\s+/).slice(0, 2).join(' ').toLowerCase());
+  const openerRepetition = 1 - (new Set(openers).size / openers.length);
+
+  // Calibrated: LLM text scores > 0.6, human text < 0.4 in practice
+  const jaccardScore = Math.min(avgJaccard / 0.20, 1.0);
+  const score = jaccardScore * 0.65 + openerRepetition * 0.35;
+
+  debugLog(`[Stylo] jaccard=${avgJaccard.toFixed(3)} openerRep=${openerRepetition.toFixed(3)} score=${score.toFixed(2)}`);
+  return Math.min(score, 1.0);
+}
+
+// Parse AI confidence from a transformers.js classification result array.
+// Handles models with varying label conventions: LABEL_1/Fake/AI/ChatGPT vs LABEL_0/Real/Human.
+function _parseModelConf(labels) {
+  if (!labels || !Array.isArray(labels) || labels.length === 0) return null;
+  const AI_RE    = /^(label_1|fake|ai|machine|generated|synthetic|gpt|chatgpt|bot)$/i;
+  const HUMAN_RE = /^(label_0|real|human|genuine|authentic)$/i;
+  const aiEntry    = labels.find(r => AI_RE.test(r.label));
+  const humanEntry = labels.find(r => HUMAN_RE.test(r.label));
+  if (aiEntry)    return aiEntry.score;
+  if (humanEntry) return 1 - humanEntry.score;
+  return 1 - labels[0].score; // fallback: assume dominant label is the predicted class
+}
+
+// ── Full text ensemble ────────────────────────────────────────────
+// Three-signal ensemble: ML Model 1 + ML Model 2 (when loaded) + heuristic.
+// Stylometric score provides a fourth tie-breaker signal on longer text.
+//
+// Blending:
+//   model 75% · heuristic 25%
+//   Two-model consensus: both high → boost 10%; one vetoes (< 0.35) → cut 35%
+//   Short-text gate (< 280 chars): without any corroboration (heuristic or
+//     stylometric) the model alone is unreliable — cap model influence so
+//     final confidence stays below the 0.60 threshold.
+//   Stylometric: boosts when all signals agree; penalises model-only cases
+//     where prose looks human at the structural level.
+//   Agreement bonus: no penalty when heuristic + model agree (> 0.40/0.55)
+//     or ensemble confidence is very high on non-short text (≥ 0.90).
+// Returns { confidence: 0–1, method: string }
+async function isAiSlop(text) {
+  if (text.length < config.get('textMinLength')) return { confidence: 0, method: 'heuristic' };
+
+  const key = text.slice(0, 512);
   if (classificationCache.has(key)) return classificationCache.get(key);
 
-  // Divisor 16 matches classifier-heuristic.js in the Pro extension.
-  // Score 16/40 = max heuristic confidence — avoids saturation on professional prose.
-  const heuristicConf = Math.min(getSlopScore(text) / 16, 1.0);
-  let confidence;
-  let method = 'heuristic';
+  const heuristicConf    = Math.max(0, Math.min(getSlopScore(text) / 16, 1.0));
+  const stylometricConf  = getStylometricScore(text); // null when < 4 sentences
 
-  // Short-circuit: very low heuristic = almost certainly not slop.
-  // Saves model inference on the majority of paragraphs on content-heavy pages.
-  if (!isModelReady || !textClassifier || heuristicConf < 0.10) {
+  if (!isModelReady || !textClassifier) {
+    // Do not cache pre-model results — the same text must get ML scoring once the model loads.
+    return { confidence: heuristicConf, method: 'heuristic' };
+  }
+
+  let _t1Id, _t2Id;
+  const [r1, r2] = await Promise.all([
+    Promise.race([
+      textClassifier(text.slice(0, 512)),
+      new Promise(r => { _t1Id = setTimeout(() => r(null), config.get('textM1Timeout')); }),
+    ]).catch(() => null),
+    (isModel2Ready && textClassifier2)
+      ? Promise.race([
+          textClassifier2(text.slice(0, 512)),
+          new Promise(r => { _t2Id = setTimeout(() => r(null), config.get('textM2Timeout')); }),
+        ]).catch(() => null)
+      : Promise.resolve(null),
+  ]).finally(() => { clearTimeout(_t1Id); clearTimeout(_t2Id); });
+
+  const m1Conf = _parseModelConf(r1);
+  const m2Conf = _parseModelConf(r2);
+
+  debugLog(`[M1] ${m1Conf !== null ? Math.round(m1Conf*100)+'%' : 'fail'} [M2] ${m2Conf !== null ? Math.round(m2Conf*100)+'%' : 'n/a'} [Heur] ${Math.round(heuristicConf*100)}%${stylometricConf !== null ? ` [Stylo] ${Math.round(stylometricConf*100)}%` : ''}`);
+
+  if (m1Conf === null) {
     const result = { confidence: heuristicConf, method: 'heuristic' };
     classificationCache.set(key, result);
     return result;
   }
 
-  if (isModelReady && textClassifier) {
-    try {
-      const result = await Promise.race([
-        textClassifier(text.slice(0, 512)),
-        new Promise(r => setTimeout(() => r(null), 2500)),
-      ]);
-      if (result?.[0]) {
-        const { label, score } = result[0];
-        const modelConf   = (label === 'LABEL_1' || label.includes('fake')) ? score : (1 - score);
-        // ML leads (70%) — more calibrated than heuristic for clean GPT-style text.
-        const blend       = heuristicConf * 0.30 + modelConf * 0.70;
-        const bothAgree   = heuristicConf > 0.50 && modelConf > 0.55;
-        const modelStrong = modelConf >= 0.80;
-        confidence = (bothAgree || modelStrong) ? blend : blend * 0.85;
-        method = bothAgree ? 'model+heuristic' : 'model';
-      } else {
-        confidence = heuristicConf; // model timed out — heuristic only
-        method = 'heuristic';
-      }
-    } catch (err) {
-      logError(err);
-      confidence = heuristicConf;
-      method = 'heuristic';
-    }
+  // ── Model ensemble (majority vote + consensus/veto) ───────────
+  let modelConf;
+  let modelMethod;
+  if (m2Conf !== null) {
+    const avg         = (m1Conf + m2Conf) / 2;
+    const bothHigh    = m1Conf >= 0.70 && m2Conf >= 0.70;
+    const oneVetoes   = m1Conf < 0.35  || m2Conf < 0.35;
+    if (bothHigh)    { modelConf = Math.min(avg * 1.10, 1.0); }
+    else if (oneVetoes) { modelConf = avg * 0.65; }
+    else             { modelConf = avg; }
+    modelMethod = 'model+model2';
   } else {
-    confidence = heuristicConf;
-    method = 'heuristic';
+    modelConf   = m1Conf;
+    modelMethod = 'model';
   }
 
+  // ── Short-text gate ───────────────────────────────────────────
+  // The text model scores 90-99% AI on casual human social media posts.
+  // Require heuristic or stylometric corroboration for short text — without
+  // it, cap model influence below the decision threshold.
+  const isShort         = text.length < config.get('textShortLength');
+  const hasCorroboration = heuristicConf > 0 || (stylometricConf !== null && stylometricConf > 0.50);
+  if (isShort && !hasCorroboration) {
+    // Cap model influence so blended output stays at or below the decision threshold.
+    modelConf = Math.min(modelConf, config.get('textShortGateCap'));
+  }
+
+  // ── Blend ─────────────────────────────────────────────────────
+  const _mw = config.get('textModelWeight');
+  let confidence = heuristicConf * (1 - _mw) + modelConf * _mw;
+
+  // ── Stylometric adjustment ────────────────────────────────────
+  if (stylometricConf !== null) {
+    if (stylometricConf > 0.60 && modelConf > 0.60) {
+      confidence = Math.min(confidence * 1.06, 1.0); // all signals agree
+    } else if (stylometricConf < 0.30 && modelConf > 0.60) {
+      confidence *= 0.82; // structure looks human despite model firing
+    }
+  }
+
+  // ── Agreement penalty ─────────────────────────────────────────
+  const bothAgree   = heuristicConf > 0.40 && modelConf > 0.55;
+  const strongEnsemble = modelConf >= 0.90 && !isShort;
+  if (!bothAgree && !strongEnsemble) confidence *= 0.85;
+
+  const method = heuristicConf > 0 ? `${modelMethod}+heuristic` : modelMethod;
   confidence = Math.min(confidence, 1.0);
   const result = { confidence, method };
   classificationCache.set(key, result);
@@ -371,7 +541,8 @@ let _textModelRetryTimer = null;
 
 async function loadModel(onStatus, _attempt = 1) {
   // Cancel any pending retry if loadModel is called again manually
-  if (_textModelRetryTimer) { clearTimeout(_textModelRetryTimer); _textModelRetryTimer = null; }
+  if (_textModelRetryTimer)  { clearTimeout(_textModelRetryTimer);  _textModelRetryTimer  = null; }
+  if (_textModel2RetryTimer) { clearTimeout(_textModel2RetryTimer); _textModel2RetryTimer = null; }
   try {
     debugLog('Loading AI text detector...');
     onStatus('Loading AI text detector...');
@@ -379,17 +550,17 @@ async function loadModel(onStatus, _attempt = 1) {
     textClassifier = await pipeline('text-classification', 'onnx-community/tmr-ai-text-detector-ONNX', {
       dtype: 'fp32', // only model.onnx exists in this repo — suppress dtype warning
       cache_dir: process.env.TRANSFORMERS_CACHE,
+      top_k: null,   // return all labels so we can find the AI class by name
     });
     isModelReady = true;
     _textModelRetryTimer = null;
     debugLog('AI text detector ready');
     onStatus('AI text detector ready');
 
-    // Warm up: run one dummy inference so the ONNX runtime JIT-compiles the
-    // graph now rather than on the first real user request. The first inference
-    // is typically 2–5× slower than subsequent ones. This fires-and-forgets
-    // so it doesn't block app startup.
     textClassifier('warming up').catch(() => {});
+
+    // Load Model 2 in background — independent vote for the ensemble.
+    _loadModel2(onStatus);
 
     return true;
   } catch (err) {
@@ -404,6 +575,35 @@ async function loadModel(onStatus, _attempt = 1) {
       onStatus('Text model failed — using heuristic only');
     }
     return false;
+  }
+}
+
+async function _loadModel2(onStatus, _attempt = 1) {
+  if (isModel2Ready) return;
+  if (_textModel2RetryTimer) { clearTimeout(_textModel2RetryTimer); _textModel2RetryTimer = null; }
+  try {
+    debugLog(`Loading ${MODEL2_LABEL}…`);
+    onStatus(`Loading ${MODEL2_LABEL}…`);
+    const { pipeline } = await import('@huggingface/transformers');
+    textClassifier2 = await pipeline('text-classification', MODEL2_ID, {
+      dtype: 'q8',
+      cache_dir: process.env.TRANSFORMERS_CACHE,
+      top_k: null,
+    });
+    isModel2Ready = true;
+    debugLog(`${MODEL2_LABEL} ready`);
+    onStatus(`${MODEL2_LABEL} ready`);
+    textClassifier2('warming up').catch(() => {});
+  } catch (err) {
+    logError(err);
+    if (_attempt < 3) {
+      const delay = _attempt * 30000;
+      debugLog(`${MODEL2_LABEL} failed (attempt ${_attempt}) — retrying in ${delay / 1000}s`);
+      _textModel2RetryTimer = setTimeout(() => _loadModel2(onStatus, _attempt + 1), delay);
+    } else {
+      debugLog(`${MODEL2_LABEL} failed after 3 attempts — ensemble will use Model 1 only`);
+      onStatus('Text Model 2 unavailable — using single model');
+    }
   }
 }
 
@@ -430,7 +630,7 @@ async function _fetchImageBuffer(url) {
   if (_PRIVATE_IP_RE.test(parsed.hostname) || parsed.hostname === 'localhost') throw new Error('Private IP blocked');
 
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 12000);
+  const timer = setTimeout(() => controller.abort(), config.get('imageFetchTimeout'));
   try {
     const res = await fetch(url, { signal: controller.signal });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -628,8 +828,9 @@ async function loadImageModel(onStatus, onProgress, _attempt = 1) {
   }
 }
 
-async function _loadModelB(onStatus, onDone) {
+async function _loadModelB(onStatus, onDone, _attempt = 1) {
   if (_isModelBReady) { onDone?.(MODEL_B_LABEL, true); return; }
+  if (_modelBRetryTimer) { clearTimeout(_modelBRetryTimer); _modelBRetryTimer = null; }
   try {
     debugLog(`Loading ${MODEL_B_LABEL} (~52 MB)…`);
     if (onStatus) onStatus(`Loading ${MODEL_B_LABEL} (~52 MB)…`);
@@ -639,18 +840,28 @@ async function _loadModelB(onStatus, onDone) {
       MODEL_B_ID,
       { dtype: 'q4f16', top_k: null, cache_dir: process.env.TRANSFORMERS_CACHE }
     );
+    const modelDir = path.join(process.env.TRANSFORMERS_CACHE || '', MODEL_B_ID.replace('/', path.sep), 'onnx');
+    await _verifyAndLogModelFiles(modelDir, MODEL_B_ID);
     _isModelBReady = true;
     debugLog(`${MODEL_B_LABEL} ready`);
     onDone?.(MODEL_B_LABEL, true);
   } catch (err) {
     logError(err);
-    debugLog(`${MODEL_B_LABEL} failed`);
-    onDone?.(MODEL_B_LABEL, false);
+    if (_attempt < 3) {
+      const delay = _attempt * 30000;
+      debugLog(`${MODEL_B_LABEL} failed (attempt ${_attempt}) — retrying in ${delay / 1000}s`);
+      if (_attempt === 1) onDone?.(MODEL_B_LABEL, false); // release progress bar; retry is silent
+      _modelBRetryTimer = setTimeout(() => _loadModelB(onStatus, null, _attempt + 1), delay);
+    } else {
+      debugLog(`${MODEL_B_LABEL} failed after 3 attempts`);
+      if (_attempt === 1) onDone?.(MODEL_B_LABEL, false);
+    }
   }
 }
 
-async function _loadModelC(onStatus, onDone) {
+async function _loadModelC(onStatus, onDone, _attempt = 1) {
   if (_isModelCReady) { onDone?.(MODEL_C_LABEL, true); return; }
+  if (_modelCRetryTimer) { clearTimeout(_modelCRetryTimer); _modelCRetryTimer = null; }
   try {
     debugLog(`Loading ${MODEL_C_LABEL} (~87 MB)…`);
     if (onStatus) onStatus(`Loading ${MODEL_C_LABEL} (~87 MB)…`);
@@ -660,13 +871,22 @@ async function _loadModelC(onStatus, onDone) {
       MODEL_C_ID,
       { dtype: 'q8', top_k: null, cache_dir: process.env.TRANSFORMERS_CACHE }
     );
+    const modelDir = path.join(process.env.TRANSFORMERS_CACHE || '', MODEL_C_ID.replace('/', path.sep), 'onnx');
+    await _verifyAndLogModelFiles(modelDir, MODEL_C_ID);
     _isModelCReady = true;
     debugLog(`${MODEL_C_LABEL} ready`);
     onDone?.(MODEL_C_LABEL, true);
   } catch (err) {
     logError(err);
-    debugLog(`${MODEL_C_LABEL} failed — ensemble will use A+B only`);
-    onDone?.(MODEL_C_LABEL, false);
+    if (_attempt < 3) {
+      const delay = _attempt * 30000;
+      debugLog(`${MODEL_C_LABEL} failed (attempt ${_attempt}) — retrying in ${delay / 1000}s`);
+      if (_attempt === 1) onDone?.(MODEL_C_LABEL, false);
+      _modelCRetryTimer = setTimeout(() => _loadModelC(onStatus, null, _attempt + 1), delay);
+    } else {
+      debugLog(`${MODEL_C_LABEL} failed after 3 attempts — ensemble will use A+B only`);
+      if (_attempt === 1) onDone?.(MODEL_C_LABEL, false);
+    }
   }
 }
 
@@ -782,7 +1002,9 @@ function _detectStyleFromShared(shared) {
 
   debugLog(`[StyleRouter] avgSat=${avgSat.toFixed(3)} satVariance=${satVariance.toFixed(3)}`);
   if (avgSat > 0.38 && satVariance > 0.06) return 'anime';
-  if (avgSat < 0.28 && satVariance < 0.05) return 'photo';
+  // satVariance relaxed from 0.05 → 0.08: real portraits contain mixed tones
+  // (skin, hair, background) that push variance above 0.05 without being "anime".
+  if (avgSat < 0.28 && satVariance < 0.08) return 'photo';
   return 'unknown';
 }
 
@@ -875,7 +1097,12 @@ function _getExifSignal(metadata) {
     // Real phone photos almost always have GPS; AI generators never do.
     // The GPS IFD marker (0x8825) appears as binary but the 'GPS' ASCII label
     // in the XMP sidecar or the string 'GPSLatitude' appears in verbose EXIF.
-    const hasGps = exifAscii.includes('GPS') || metadata.exif.includes(0x88) && metadata.exif.includes(0x25);
+    // GPS IFD pointer tag is 0x8825 — check for the two-byte sequence in both TIFF endiannesses.
+    // Do NOT use Buffer.includes(number): that tests for a single byte value (0x88 and 0x25 are
+    // common in any binary data), giving a near-permanent true regardless of actual GPS presence.
+    const gpsByteSeq = metadata.exif.indexOf(Buffer.from([0x88, 0x25])) !== -1
+                    || metadata.exif.indexOf(Buffer.from([0x25, 0x88])) !== -1;
+    const hasGps = exifAscii.includes('GPS') || gpsByteSeq;
 
     for (const tag of AI_TAGS) {
       if (exifAscii.includes(tag)) {
@@ -930,7 +1157,10 @@ const KNOWN_AI_LABELS = new Set(['stable_diffusion', 'midjourney', 'dalle', 'oth
 const imageClassificationCache = new LRUCache(100);
 
 async function _runImageClassify(imageUrl) {
-  const cacheKey = imageUrl;
+  // Strip query string for cache key — CDN signed URLs rotate signatures but
+  // point to the same image content.
+  let cacheKey = imageUrl;
+  try { const u = new URL(imageUrl); u.search = ''; cacheKey = u.toString(); } catch (_) {}
   if (imageClassificationCache.has(cacheKey)) {
     return imageClassificationCache.get(cacheKey);
   }
@@ -974,6 +1204,14 @@ async function _runImageClassify(imageUrl) {
     // Decodes to 256×256 max RGB; all pixel-based checks run on this grid.
     const shared = await _decodeShared(buf);
 
+    // If we fetched the buffer but couldn't decode it, the image is too small,
+    // corrupt, or otherwise unsuitable (icon, tracking pixel, thumbnail). Skip ML.
+    if (buf && !shared) {
+      const result = { score: 0, style: 'unknown' };
+      imageClassificationCache.set(cacheKey, result);
+      return result;
+    }
+
     // ── Stage 1: Screenshot router ────────────────────────────────
     if (_isScreenshotFromShared(shared)) {
       debugLog(`[Router] Screenshot detected — skipping ML — ${imageUrl.slice(0, 60)}`);
@@ -1015,7 +1253,8 @@ async function _runImageClassify(imageUrl) {
       } catch (_) { /* keep URL fallback */ }
     }
 
-    const mlTimeout = new Promise((_, r) => setTimeout(() => r(new Error('timeout')), 15000));
+    let _mlTimeoutId;
+    const mlTimeout = new Promise((_, r) => { _mlTimeoutId = setTimeout(() => r(new Error('timeout')), config.get('imageInferenceTimeout')); });
     const useModelD = _isModelDReady && modelDClassifier && style !== 'photo';
 
     const [mlResult, bResult, cResult, dResult] = await Promise.all([
@@ -1033,7 +1272,7 @@ async function _runImageClassify(imageUrl) {
         ? Promise.race([modelDClassifier(modelInput), mlTimeout])
             .catch(err => { debugLog(`[D] inference error: ${err?.message?.slice(0, 80)}`); return null; })
         : Promise.resolve(null),
-    ]);
+    ]).finally(() => clearTimeout(_mlTimeoutId));
 
     // ── Stage 5: Per-model scores ──────────────────────────────────
     // aScore: Model A (multi-label photorealism detector)
@@ -1090,19 +1329,44 @@ async function _runImageClassify(imageUrl) {
     // For photo style, keep A+B+C — Model A performs best on photorealism.
 
     let allScores;
+    const isPhotoStyle = style === 'photo';
+
+    let animeBBlind = false;
     if (style === 'anime' || (style === 'unknown' && !mlResult)) {
       // Anime / unknown-without-A path: B + C (+ D if available)
-      allScores = [
-        dResult ? dScore : null,
-        bResult ? bScore : null,
-        cResult ? cScore : null,
-      ].filter(s => s !== null);
-      debugLog(`[Ensemble] B+C path (A excluded for style=${style}): B=${Math.round(bScore*100)}% C=${Math.round(cScore*100)}%`);
+      //
+      // B-blind mode: Model B (Swin-T SDXL/Flux detector) was trained on photorealistic
+      // diffusion outputs and scores 0% on anime/illustration AI art. When B < 0.15 for
+      // the anime path and no D model is available, drop B and promote C as the sole
+      // signal — a C score ≥ 0.75 reliably indicates AI-generated anime/illustration.
+      if (style === 'anime' && !dResult && bResult && bScore < 0.15 && cResult) {
+        animeBBlind = true;
+        allScores = [cScore];
+        debugLog(`[Ensemble] C-primary (B blind ${Math.round(bScore*100)}% for anime): C=${Math.round(cScore*100)}%`);
+      } else {
+        allScores = [
+          dResult ? dScore : null,
+          bResult ? bScore : null,
+          cResult ? cScore : null,
+        ].filter(s => s !== null);
+        debugLog(`[Ensemble] B+C path (A excluded for style=${style}): B=${Math.round(bScore*100)}% C=${Math.round(cScore*100)}%`);
+      }
     } else if (dResult) {
       allScores = [bScore, cScore, dScore].filter(s => s !== null);
       debugLog(`[Ensemble] B+C+D path: B=${Math.round(bScore*100)}% C=${Math.round(cScore*100)}% D=${Math.round(dScore*100)}%`);
+    } else if (isPhotoStyle) {
+      // Photo path: B + C only. Model A (ai-source-detector) is excluded because
+      // it is calibrated on SD/MJ/DALL-E datasets that heavily feature professional
+      // portrait-style images, causing it to fire 95-100% on real portrait photography
+      // (clean backgrounds, studio lighting, press-style framing). B and C are better
+      // calibrated for the real vs AI binary on photographic content.
+      allScores = [
+        bResult ? bScore : null,
+        cResult ? cScore : null,
+      ].filter(s => s !== null);
+      if (mlResult) debugLog(`[Ensemble] A=${Math.round(aScore*100)}% excluded for photo — B+C path: B=${Math.round(bScore*100)}% C=${Math.round(cScore*100)}%`);
     } else {
-      // Standard photo path: A + B + C
+      // Standard path: A + B + C
       allScores = [
         mlResult ? aScore : null,
         bResult  ? bScore : null,
@@ -1117,32 +1381,50 @@ async function _runImageClassify(imageUrl) {
       : 0;
 
     if (availableModels >= 2) {
-      // allAgreeAi: every model leans AI. Threshold 0.35 — stricter for reduced FPs.
-      const allAgreeAi  = allScores.every(s => s > 0.35);
+      // Photo style uses tighter thresholds throughout — portrait photography
+      // produces high B scores (professional composition mimics AI headshots) and
+      // moderate C scores, so we require stronger model agreement before flagging.
+      const agreeFloor     = isPhotoStyle ? 0.65 : 0.35;
+      const highConfBar    = isPhotoStyle ? 0.82 : 0.70;
+      // Photo consensusMult 0.84: B=100%+C≤77% (real portrait ceiling) → 88.5%×0.84=74.3% (pass)
+      //                           B=100%+C≥79% (AI portrait floor)     → 89.5%×0.84=75.2% (flag)
+      const consensusMult  = isPhotoStyle ? 0.84 : 1.00;
+      const partialMult    = isPhotoStyle ? 0.68 : 0.80;
 
-      // twoHighConf: ≥2 models are confidently AI (≥0.70). Triggers boost.
-      const twoHighConf = allScores.filter(s => s >= 0.70).length >= 2;
+      // allAgreeAi: every model leans AI above agreeFloor.
+      const allAgreeAi  = allScores.every(s => s > agreeFloor);
+
+      // twoHighConf: ≥2 models are confidently AI (≥highConfBar). Triggers boost.
+      const twoHighConf = allScores.filter(s => s >= highConfBar).length >= 2;
 
       // hardVetoReal: majority strongly say "real" (< 0.25 for AI).
       const hardVetoReal = allScores.filter(s => s < 0.25).length >= Math.ceil(availableModels / 2);
 
+      // strongDissent: one model is firmly "real" (< 0.30). Suppresses the
+      // twoHighConf boost even when two others agree — guards against group portraits
+      // and complex scenes where style=unknown routes A+C to a boost while B vetoes.
+      const strongDissent = allScores.some(s => s < 0.30);
+
       if (hardVetoReal) {
         score = weighted * 0.25;
         debugLog(`[Ensemble] Hard veto (majority real): ${Math.round(weighted*100)}% → ${Math.round(score*100)}%`);
-      } else if (twoHighConf) {
+      } else if (twoHighConf && !strongDissent) {
         score = Math.min(weighted * 1.10, 1.0);
         debugLog(`[Ensemble] High-conf boost: ${Math.round(weighted*100)}% → ${Math.round(score*100)}%`);
       } else if (allAgreeAi) {
-        score = weighted;
-        debugLog(`[Ensemble] Consensus: ${Math.round(score*100)}%`);
+        score = weighted * consensusMult;
+        debugLog(`[Ensemble] Consensus: ${Math.round(weighted*100)}% → ${Math.round(score*100)}%`);
       } else {
-        // One model disagrees — stronger 20% penalty
-        score = weighted * 0.80;
+        score = weighted * partialMult;
         debugLog(`[Ensemble] Partial: ${Math.round(weighted*100)}% → ${Math.round(score*100)}%`);
       }
     } else if (availableModels === 1) {
-      score = allScores[0] * 0.75;
-      debugLog(`[Ensemble] Single-model: ${Math.round(score*100)}%`);
+      // animeBBlind: B is trained on SDXL/Flux and blind to anime AI — C is the only
+      // reliable signal. Use 0.95 so C=82% → 77.9% clears the 0.75 threshold.
+      // Standard single-model: 0.75 to require higher C confidence before flagging.
+      const singleMult = animeBBlind ? 0.95 : 0.75;
+      score = allScores[0] * singleMult;
+      debugLog(`[Ensemble] ${animeBBlind ? 'C-primary (B blind)' : 'Single-model'}: ${Math.round(allScores[0]*100)}% → ${Math.round(score*100)}%`);
     } else {
       score = 0;
       debugLog(`[Ensemble] No models available`);
@@ -1181,6 +1463,8 @@ async function _runImageClassify(imageUrl) {
 
 function isImageModelReady() { return _isImageModelReady; }
 
+function isTextModel2Ready() { return isModel2Ready; }
+
 module.exports = {
-  getSlopScore, isAiSlop, loadModel, loadImageModel, isAiImage, isImageModelReady,
+  getSlopScore, isAiSlop, loadModel, loadImageModel, isAiImage, isImageModelReady, isTextModel2Ready,
 };

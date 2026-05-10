@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 const { app, BrowserWindow, Tray, Menu, ipcMain, shell, Notification } = require('electron');
-const { execSync, execFile } = require('child_process');
+const { execFile, execFileSync } = require('child_process');
 const path = require('path');
 const fs   = require('fs');
 
@@ -10,6 +10,7 @@ const { autoUpdater }  = require('electron-updater');
 const logger           = require('./logger');
 const state            = require('./state');
 const counts           = require('./counts');
+const config           = require('./config');
 const classifier       = require('./classifier');
 const proxy            = require('./proxy');
 const service          = require('./service');
@@ -55,6 +56,7 @@ const SETTINGS_DEFAULTS = {
   imageModelsReady:      false,
   PROXY_ENABLED:   false,
   BYPASS_DOMAINS:  state.BYPASS_DOMAINS.slice(),
+  TRUSTED_PATTERNS: [],
 };
 
 function _settingsPath() { return path.join(app.getPath('userData'), 'settings.json'); }
@@ -102,35 +104,43 @@ function safeSend(channel, ...args) {
 
 // ── System proxy (PAC file) ───────────────────────────────────────
 function setSystemProxy(enabled) {
-  const pacUrl = `http://127.0.0.1:${proxy.PORT}/filter.pac`;
+  const REG_KEY = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings';
   try {
     if (enabled) {
-      execSync(
-        `reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings" /v AutoConfigURL /t REG_SZ /d "${pacUrl}" /f` +
-        ` && reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings" /v ProxyEnable /t REG_DWORD /d 0 /f`,
-        { windowsHide: true }
-      );
-      logger.debugLog(`System proxy set to PAC: ${pacUrl}`);
+      const pacUrl = `http://127.0.0.1:${proxy.PORT}/filter.pac`;
+      execFileSync('reg.exe', ['add', REG_KEY, '/v', 'AutoConfigURL', '/t', 'REG_SZ', '/d', pacUrl, '/f'], { windowsHide: true });
+      execFileSync('reg.exe', ['add', REG_KEY, '/v', 'ProxyEnable', '/t', 'REG_DWORD', '/d', '0', '/f'], { windowsHide: true });
+      logger.debugLog(`System proxy set to PAC: http://127.0.0.1:${proxy.PORT}/filter.pac`);
     } else {
-      execSync(
-        `reg delete "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings" /v AutoConfigURL /f 2>nul` +
-        ` & reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings" /v ProxyEnable /t REG_DWORD /d 0 /f`,
-        { windowsHide: true }
-      );
+      try {
+        execFileSync('reg.exe', ['delete', REG_KEY, '/v', 'AutoConfigURL', '/f'], { windowsHide: true });
+      } catch {} // key may not exist if proxy was never enabled
+      execFileSync('reg.exe', ['add', REG_KEY, '/v', 'ProxyEnable', '/t', 'REG_DWORD', '/d', '0', '/f'], { windowsHide: true });
       logger.debugLog('System proxy cleared');
     }
   } catch (err) { logger.logError(err); }
 }
 
 // ── Certificate installation ──────────────────────────────────────
-function installCert() {
+// revertOnFail: if true and install fails, proxy is turned back off.
+// Set when called from toggleProxy (user just enabled via UI). False at
+// startup and for manual CERT button retries.
+function installCert(revertOnFail = false) {
   logger.debugLog('Installing CA certificate...');
+  safeSend('cert-installing');
   safeSend('status-update', 'Installing certificate...');
   const ps = `Import-Certificate -FilePath '${caCertPath}' -CertStoreLocation Cert:\\CurrentUser\\Root -Confirm:$false`;
   execFile('powershell.exe', ['-Command', ps], { windowsHide: true }, err => {
     if (err) {
       logger.logError(err);
-      safeSend('status-update', 'Cert install failed — click Reinstall Cert to retry');
+      if (revertOnFail && state.PROXY_ENABLED) {
+        state.PROXY_ENABLED = false;
+        proxy.stop();
+        setTimeout(() => setSystemProxy(false), 500);
+        _saveSettings({ PROXY_ENABLED: false });
+        safeSend('proxy-status', false);
+      }
+      safeSend('status-update', 'Certificate install failed — click CERT to retry');
       safeSend('cert-ready', false);
     } else {
       safeSend('status-update', 'SlopProx is running');
@@ -251,8 +261,15 @@ function updateTray() {
 async function toggleProxy() {
   state.PROXY_ENABLED = !state.PROXY_ENABLED;
   if (state.PROXY_ENABLED) {
-    proxy.start(certsDir);
+    const ok = await proxy.start(certsDir);
+    if (!ok) {
+      state.PROXY_ENABLED = false;
+      _saveSettings({ PROXY_ENABLED: false });
+      updateTray();
+      return;
+    }
     setSystemProxy(true);
+    setTimeout(() => installCert(true), 500);
   } else {
     await proxy.stop();
     // Small delay to let connections close before clearing system proxy
@@ -266,6 +283,7 @@ async function toggleProxy() {
 
 function toggleImageDetection() {
   state.IMAGE_DETECTION_ENABLED = !state.IMAGE_DETECTION_ENABLED;
+  _saveSettings({ defaultImageDetection: state.IMAGE_DETECTION_ENABLED });
   safeSend('image-detection-status', state.IMAGE_DETECTION_ENABLED);
   logger.debugLog(`Image detection ${state.IMAGE_DETECTION_ENABLED ? 'enabled' : 'disabled'}`);
   if (state.IMAGE_DETECTION_ENABLED && !classifier.isImageModelReady())
@@ -309,6 +327,7 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
+      sandbox: true,
     },
   });
   mainWindow.loadFile('index.html');
@@ -328,6 +347,8 @@ function createWindow() {
     safeSend('extension-installed',    isExtensionInstalled());
     safeSend('settings-loaded',        _getSettings());
     safeSend('bypass-domains',         { list: state.BYPASS_DOMAINS, protected: state.BYPASS_DOMAINS_PROTECTED });
+    safeSend('trusted-patterns',       state.TRUSTED_PATTERNS);
+    safeSend('config-loaded',          { values: config.all(), defaults: config.DEFAULTS });
 
     if (state.IMAGE_DETECTION_ENABLED && !classifier.isImageModelReady())
       _startImageModelLoad();
@@ -363,6 +384,7 @@ app.whenReady().then(async () => {
   const userData = app.getPath('userData');
   logger.init(userData);
   counts.init(userData);
+  config.init(userData);
 
   // Load and apply persisted settings
   const settings = _getSettings();
@@ -375,6 +397,7 @@ app.whenReady().then(async () => {
   state.YOUTUBE_FILTER_ENABLED   = settings.defaultYoutubeFilter;
   state.PROXY_ENABLED            = settings.PROXY_ENABLED;
   state.BYPASS_DOMAINS           = settings.BYPASS_DOMAINS || state.BYPASS_DOMAINS;
+  state.TRUSTED_PATTERNS         = settings.TRUSTED_PATTERNS || [];
   app.setLoginItemSettings({ openAtLogin: settings.launchAtStartup, openAsHidden: true });
 
   // Seed in-memory counters from persisted all-time totals
@@ -395,7 +418,19 @@ app.whenReady().then(async () => {
 
   certsDir   = path.join(userData, 'certs');
   caCertPath = path.join(certsDir, 'ca.pem');
-  if (!fs.existsSync(certsDir)) fs.mkdirSync(certsDir, { recursive: true });
+  if (!fs.existsSync(certsDir)) {
+    fs.mkdirSync(certsDir, { recursive: true });
+    // Lock the certs directory to the current user only so the CA private key
+    // is not readable by other accounts or processes on a shared machine.
+    // icacls: /inheritance:r removes inherited ACEs; /grant:r replaces any existing
+    // entry for this user with Full Control (OI)(CI) — applies to dir + all contents.
+    const currentUser = process.env.USERNAME || '';
+    if (currentUser) {
+      try {
+        execFileSync('icacls.exe', [certsDir, '/inheritance:r', '/grant:r', `${currentUser}:(OI)(CI)F`], { windowsHide: true });
+      } catch (e) { logger.logError(e); }
+    }
+  }
 
   // Set transformers cache directory so HuggingFace models land in userData
   const cacheDir = path.join(userData, 'transformers-cache');
@@ -415,12 +450,17 @@ app.whenReady().then(async () => {
       mainWindow.focus();
       mainWindow.flashFrame(true);
     }
-  });
+  }, userData);
 
   if (state.PROXY_ENABLED) {
-    await proxy.start(certsDir);
-    setSystemProxy(true);
-    setTimeout(installCert, 1500); // small delay so proxy is listening before cert prompt
+    const ok = await proxy.start(certsDir);
+    if (ok) {
+      setSystemProxy(true);
+      setTimeout(installCert, 1500); // small delay so proxy is listening before cert prompt
+    } else {
+      state.PROXY_ENABLED = false;
+      _saveSettings({ PROXY_ENABLED: false });
+    }
   }
 
   service.start(safeSend);
@@ -436,23 +476,26 @@ ipcMain.on('window-close',   () => {
 
 ipcMain.on('toggle-filter',          () => {
   state.FILTER_ENABLED = !state.FILTER_ENABLED;
+  _saveSettings({ defaultTextFilter: state.FILTER_ENABLED });
   safeSend('filter-status', state.FILTER_ENABLED);
   logger.debugLog(`Text filter ${state.FILTER_ENABLED ? 'on' : 'off'}`);
 });
 ipcMain.on('toggle-adblock',         () => {
   state.AD_BLOCKING_ENABLED = !state.AD_BLOCKING_ENABLED;
+  _saveSettings({ defaultAdBlocker: state.AD_BLOCKING_ENABLED });
   safeSend('adblock-status', state.AD_BLOCKING_ENABLED);
   logger.debugLog(`Ad blocker ${state.AD_BLOCKING_ENABLED ? 'on' : 'off'}`);
 });
 ipcMain.on('toggle-image-detection', toggleImageDetection);
 ipcMain.on('toggle-youtube-filter',  () => {
   state.YOUTUBE_FILTER_ENABLED = !state.YOUTUBE_FILTER_ENABLED;
+  _saveSettings({ defaultYoutubeFilter: state.YOUTUBE_FILTER_ENABLED });
   safeSend('youtube-filter-status', state.YOUTUBE_FILTER_ENABLED);
   logger.debugLog(`YouTube filter ${state.YOUTUBE_FILTER_ENABLED ? 'on' : 'off'}`);
 });
 ipcMain.on('toggle-proxy',           toggleProxy);
 
-ipcMain.on('reinstall-cert', installCert);
+ipcMain.on('reinstall-cert', () => installCert(false));
 
 ipcMain.on('install-extension',     installExtension);
 ipcMain.on('open-extension-folder', () => {
@@ -486,6 +529,7 @@ function openLogWindow() {
       preload: path.join(__dirname, 'preload-log.js'),
       contextIsolation: true,
       nodeIntegration: false,
+      sandbox: true,
     },
   });
   logWindow.loadFile('log-viewer.html');
@@ -512,6 +556,21 @@ ipcMain.on('log-window-minimize',  () => logWindow?.minimize());
 
 ipcMain.on('open-external', (_, url) => {
   if (typeof url === 'string' && /^https?:\/\//i.test(url)) shell.openExternal(url);
+});
+
+ipcMain.handle('get-config', () => ({ values: config.all(), defaults: config.DEFAULTS }));
+
+ipcMain.on('set-config', (_, { key, value }) => {
+  if (!config.set(key, value)) return; // unknown key — ignore
+  logger.debugLog(`Config: ${key} = ${JSON.stringify(value)}`);
+  // Broadcast updated config so any open renderer windows stay in sync.
+  safeSend('config-loaded', { values: config.all(), defaults: config.DEFAULTS });
+});
+
+ipcMain.on('reset-config', () => {
+  for (const key of Object.keys(config.DEFAULTS)) config.set(key, config.DEFAULTS[key]);
+  logger.debugLog('Config reset to defaults');
+  safeSend('config-loaded', { values: config.all(), defaults: config.DEFAULTS });
 });
 
 const _ALLOWED_SETTINGS = new Set(['launchAtStartup', 'minimizeToTray', 'PROXY_ENABLED', 'soundEnabled', 'filterEnabled', 'imageDetectionEnabled', 'youtubeFilterEnabled', 'autoStart']);
@@ -609,6 +668,26 @@ ipcMain.on('remove-bypass', (_, hostname) => {
     setSystemProxy(true); // re-fetch PAC so the host routes through proxy again
     safeSend('status-update', `Bypass removed — reopen ${cleanHost} to apply`);
   }, 800);
+});
+
+ipcMain.on('add-trusted-pattern', (_, pattern) => {
+  if (!pattern) return;
+  const clean = pattern.trim();
+  if (!clean || state.TRUSTED_PATTERNS.includes(clean)) return;
+  state.TRUSTED_PATTERNS.push(clean);
+  _saveSettings({ TRUSTED_PATTERNS: state.TRUSTED_PATTERNS });
+  safeSend('trusted-patterns', state.TRUSTED_PATTERNS);
+  logger.debugLog(`Added trusted pattern: ${clean}`);
+});
+
+ipcMain.on('remove-trusted-pattern', (_, pattern) => {
+  if (!pattern) return;
+  const idx = state.TRUSTED_PATTERNS.indexOf(pattern.trim());
+  if (idx === -1) return;
+  state.TRUSTED_PATTERNS.splice(idx, 1);
+  _saveSettings({ TRUSTED_PATTERNS: state.TRUSTED_PATTERNS });
+  safeSend('trusted-patterns', state.TRUSTED_PATTERNS);
+  logger.debugLog(`Removed trusted pattern: ${pattern.trim()}`);
 });
 
 // ── Quit ──────────────────────────────────────────────────────────

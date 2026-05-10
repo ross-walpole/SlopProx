@@ -9,6 +9,7 @@ const { isAiSlop }           = require('./classifier');
 const { debugLog, logError } = require('./logger');
 const state  = require('./state');
 const counts = require('./counts');
+const config = require('./config');
 const pac    = require('./pac');
 
 const PORT = 8081;
@@ -31,11 +32,12 @@ const AD_WHITELIST = [
   'windows.com', 'microsoft.com', 'akadns.net', 'azureedge.net',
 ];
 
-let proxyServer   = null;
-let safeSend      = () => {};
-let showWindow    = () => {};
+let proxyServer    = null;
+let safeSend       = () => {};
+let showWindow     = () => {};
 let injectedScript = '';
 let injectedStyles = '';
+let _activeAdDomains = AD_DOMAINS;
 
 const recentSuggestions = new Map(); // hostname → timestamp (deduplication)
 
@@ -117,17 +119,39 @@ function isRealBrowserRequest(req) {
   return hasSecFetch && (hasClientHints || hasUpgrade || looksLikeBrowserUA);
 }
 
-function init(sendFn, showWindowFn) {
+// Merges the hardcoded AD_DOMAINS list with an optional user-editable
+// ad-domains.txt in userData (one domain per line, # comments allowed).
+// Lets power users add new ad networks without waiting for a release.
+function _loadAdDomains(userData) {
+  if (!userData) return AD_DOMAINS;
+  const overridePath = path.join(userData, 'ad-domains.txt');
+  if (!fs.existsSync(overridePath)) return AD_DOMAINS;
+  try {
+    const extra = fs.readFileSync(overridePath, 'utf8')
+      .split('\n')
+      .map(l => l.trim().toLowerCase())
+      .filter(l => l && !l.startsWith('#'));
+    const merged = [...new Set([...AD_DOMAINS, ...extra])];
+    debugLog(`Ad domain list: ${AD_DOMAINS.length} built-in + ${extra.length} from ad-domains.txt = ${merged.length} total`);
+    return merged;
+  } catch (err) {
+    logError(err);
+    return AD_DOMAINS;
+  }
+}
+
+function init(sendFn, showWindowFn, userData) {
   safeSend   = sendFn;
   showWindow = showWindowFn || (() => {});
-  injectedScript = fs.readFileSync(path.join(__dirname, 'injected.js'),  'utf8');
-  injectedStyles = fs.readFileSync(path.join(__dirname, 'injected.css'), 'utf8');
+  injectedScript   = fs.readFileSync(path.join(__dirname, 'injected.js'),  'utf8');
+  injectedStyles   = fs.readFileSync(path.join(__dirname, 'injected.css'), 'utf8');
+  _activeAdDomains = _loadAdDomains(userData);
 }
 
 function isAdRequest(host, urlStr) {
   if (!state.AD_BLOCKING_ENABLED) return false;
   if (AD_WHITELIST.some(w => host.includes(w))) return false;
-  return AD_DOMAINS.some(d => host.includes(d)) || AD_URL_RE.test(urlStr);
+  return _activeAdDomains.some(d => host.includes(d)) || AD_URL_RE.test(urlStr);
 }
 
 function extractNonce(cspHeader) {
@@ -144,12 +168,14 @@ function processHtml(body, cspHeader) {
     if (m) nonce = m[1];
   }
   const nonceAttr = nonce ? ` nonce="${nonce}"` : '';
+  const patterns  = JSON.stringify(state.TRUSTED_PATTERNS || []);
+  const configTag = `<script id="sf-config"${nonceAttr}>window.__sfTrustedPatterns=${patterns};</script>`;
   const styleTag  = `<style id="sf-styles"${nonceAttr}>${injectedStyles}</style>`;
   const scriptTag = `<script id="sf-script"${nonceAttr}>${injectedScript}</script>`;
   let result = body;
   const headClose = result.lastIndexOf('</head>');
-  if (headClose !== -1) result = result.slice(0, headClose) + styleTag + result.slice(headClose);
-  else result += styleTag;
+  if (headClose !== -1) result = result.slice(0, headClose) + configTag + styleTag + result.slice(headClose);
+  else result += configTag + styleTag;
   const bodyClose = result.lastIndexOf('</body>');
   if (bodyClose !== -1) result = result.slice(0, bodyClose) + scriptTag + result.slice(bodyClose);
   else result += scriptTag;
@@ -157,7 +183,7 @@ function processHtml(body, cspHeader) {
 }
 
 async function start(certsDir) {
-  if (proxyServer || !state.PROXY_ENABLED) return;
+  if (proxyServer || !state.PROXY_ENABLED) return true;
 
   const caCertPath = path.join(certsDir, 'ca.pem');
   const caKeyPath  = path.join(certsDir, 'ca.key');
@@ -213,11 +239,11 @@ async function start(certsDir) {
             const rawText = await req.body.getText();
             if (rawText.length > 50000) return { response: { statusCode: 413, headers: {}, body: '' } };
             const text = rawText.trim().replace(/\s+/g, ' ');
-            if (text.length < 60 || !state.FILTER_ENABLED) {
+            if (text.length < config.get('textMinLength') || !state.FILTER_ENABLED) {
               return { response: { statusCode: 200, headers: { 'content-type': 'application/json' }, body: '{"isSlop":false,"confidence":0}' } };
             }
             const { confidence, method } = await isAiSlop(text);
-            const isSlop = confidence > 0.45;
+            const isSlop = confidence > config.get('textThreshold');
             debugLog(`Text/proxy [${isSlop ? 'SLOP' : 'real'} ${Math.round(confidence * 100)}% ${method}]: "${text.slice(0, 80)}"`);
             if (isSlop) { state.filteredCount++; safeSend('filter-count', state.filteredCount); counts.schedule(state); }
             let _host = urlStr; try { _host = new URL(urlStr).hostname; } catch (_) {}
@@ -344,14 +370,16 @@ async function start(certsDir) {
     debugLog(`Proxy started on port ${PORT}`);
     safeSend('status-update', 'AI Slop Filter is running');
     safeSend('proxy-status', true);
+    return true;
 
   } catch (err) {
-    if (err.code === 'EADDRINUSE') {
-      logError(new Error(`Port ${PORT} is already in use`));
-      safeSend('status-update', `Error: Port ${PORT} in use — restart the app`);
-    } else {
-      logError(err);
-    }
+    proxyServer = null;
+    const message = err.code === 'EADDRINUSE'
+      ? `Port ${PORT} is already in use — close the conflicting application and try again`
+      : (err.message || String(err));
+    logError(err.code === 'EADDRINUSE' ? new Error(`Port ${PORT} is already in use`) : err);
+    safeSend('proxy-start-failed', { code: err.code || 'UNKNOWN', message });
+    return false;
   }
 }
 

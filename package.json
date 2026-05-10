@@ -7,7 +7,8 @@
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "build": "electron-builder --win"
+    "build": "electron-builder --win",
+    "test": "jest"
   },
   "build": {
     "appId": "com.ai.slopfilter",
@@ -15,7 +16,9 @@
     "win": {
       "target": "nsis",
       "icon": "icon.png",
-      "requestedExecutionLevel": "requireAdministrator"
+      "requestedExecutionLevel": "asInvoker",
+      "signingHashAlgorithms": ["sha256"],
+      "timeStampServer": "http://timestamp.digicert.com"
     },
     "nsis": {
       "oneClick": false,
@@ -38,6 +41,7 @@
   },
   "devDependencies": {
     "electron": "^41.0.4",
-    "electron-builder": "^25.1.8"
+    "electron-builder": "^25.1.8",
+    "jest": "^30.4.2"
   }
 }

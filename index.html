@@ -467,9 +467,28 @@
     </div>
 
     <!-- Bypass list -->
-    <div class="flex-1 overflow-y-auto px-4 pb-4">
+    <div class="flex-1 min-h-0 overflow-y-auto px-4 pb-2">
       <div id="bypassInlineList" class="flex flex-col gap-1.5">
         <div class="text-gd text-[10px] text-center py-5 tracking-wide">No bypass domains added yet.</div>
+      </div>
+    </div>
+
+    <!-- Trusted sources section -->
+    <div class="shrink-0 px-4 pt-3 pb-1 border-t border-tb">
+      <div class="text-gb text-[11px] font-semibold tracking-widest mb-0.5">TRUSTED SOURCES</div>
+      <div class="text-gd text-[10px] tracking-wide mb-2">URLs starting with these prefixes are never filtered.</div>
+      <div class="flex gap-2">
+        <input id="trustedAddInput" type="text" placeholder="e.g. https://example.com/blog/"
+               class="flex-1 bg-t3 border border-tb focus:border-tb2 rounded px-3 py-1.5 text-[10px] text-g placeholder-tb2 outline-none font-mono transition-colors" />
+        <button id="trustedAddBtn"
+                class="border border-g text-g hover:bg-gg text-[10px] font-semibold px-3 py-1.5 rounded transition-colors shrink-0 tracking-widest">
+          ADD
+        </button>
+      </div>
+    </div>
+    <div class="flex-1 min-h-0 overflow-y-auto px-4 pb-3">
+      <div id="trustedInlineList" class="flex flex-col gap-1.5 mt-2">
+        <div class="text-gd text-[10px] text-center py-3 tracking-wide">No trusted sources added yet.</div>
       </div>
     </div>
 
@@ -1000,17 +1019,28 @@ window.addEventListener('load', () => {
     dot.className = `w-1.5 h-1.5 rounded-full shrink-0 ${isError ? 'bg-red-400' : 'bg-g status-dot-live'}`;
   });
 
+  api.on('cert-installing', () => {
+    proxyToggle.setLocked(true);
+  });
+
   api.on('cert-ready', ok => {
+    proxyToggle.setLocked(false);
     if (ok) {
       uiSound('success');
       dismissOverlay();
     } else {
       uiSound('error');
-      overlaySpinner.style.display = 'none';
-      overlayTitle.textContent = 'CERTIFICATE INSTALL FAILED';
-      overlayTitle.classList.add('text-red-400');
-      overlayStatus.textContent = 'Click Retry or use the CERT button in the Extension tab.';
-      overlayRetry.classList.remove('hidden');
+      if (!overlayDismissed) {
+        // Startup path: overlay is still on screen — show error in it.
+        overlaySpinner.style.display = 'none';
+        overlayTitle.textContent = 'CERTIFICATE INSTALL FAILED';
+        overlayTitle.classList.add('text-red-400');
+        overlayStatus.textContent = 'Click Retry or use the CERT button in the Settings tab.';
+        overlayRetry.classList.remove('hidden');
+      }
+      // Mid-session path: proxy-status: false was already sent by main.js
+      // (toggle reverts to OFF) and status-update carries the error message.
+      // Nothing else needed here.
     }
   });
 
@@ -1086,6 +1116,18 @@ window.addEventListener('load', () => {
         if (activePanel && activePanel.id === 'tab-bypass') switchTab('filters');
       }
     }
+  });
+
+  api.on('proxy-start-failed', ({ message }) => {
+    proxyEnabled = false;
+    proxyToggle.set(false);
+    const card = document.getElementById('proxyCard');
+    if (card) card.classList.remove('fc-on');
+    document.getElementById('proxySubtitle').innerHTML =
+      `<span class="text-red-400">⚠ Failed to start: ${message}</span>`;
+    document.getElementById('mainSubtitle').textContent = _mainSubtitleText(mainToggle.isOn());
+    document.getElementById('adSubtitle').textContent = _adSubtitleText();
+    uiSound('error');
   });
 
   // ── TLS bypass alert ──────────────────────────────────────────────
@@ -1178,6 +1220,37 @@ window.addEventListener('load', () => {
   }
   document.getElementById('bypassAddBtn').addEventListener('click', submitBypassAdd);
   bypassInput.addEventListener('keydown', e => { if (e.key === 'Enter') submitBypassAdd(); });
+
+  // ── Trusted patterns list ─────────────────────────────────────────
+  function renderTrustedPatterns(patterns) {
+    const list = document.getElementById('trustedInlineList');
+    if (!patterns || patterns.length === 0) {
+      list.innerHTML = '<div class="text-gd text-[10px] text-center py-3 tracking-wide">No trusted sources added yet.</div>';
+      return;
+    }
+    list.innerHTML = patterns.map(p =>
+      `<div class="flex items-center justify-between bg-t3 border border-tb rounded px-3 py-2">
+        <span class="font-mono text-[10px] text-g truncate mr-2">${p}</span>
+        <button data-pattern="${p.replace(/"/g, '&quot;')}" class="trusted-inline-remove text-tb2 hover:text-red-400 transition-colors text-[12px] font-bold leading-none shrink-0">×</button>
+      </div>`
+    ).join('');
+    list.querySelectorAll('.trusted-inline-remove').forEach(btn => {
+      btn.onclick = () => { uiSound('back'); api.send('remove-trusted-pattern', btn.dataset.pattern); };
+    });
+  }
+
+  api.on('trusted-patterns', patterns => renderTrustedPatterns(patterns));
+
+  const trustedInput = document.getElementById('trustedAddInput');
+  function submitTrustedAdd() {
+    const val = trustedInput.value.trim();
+    if (!val) return;
+    uiSound('confirm');
+    api.send('add-trusted-pattern', val);
+    trustedInput.value = '';
+  }
+  document.getElementById('trustedAddBtn').addEventListener('click', submitTrustedAdd);
+  trustedInput.addEventListener('keydown', e => { if (e.key === 'Enter') submitTrustedAdd(); });
 
   // ── Image card nudge ──────────────────────────────────────────────
   document.getElementById('imageCard').addEventListener('click', e => {
