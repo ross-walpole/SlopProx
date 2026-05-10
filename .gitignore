@@ -23,6 +23,19 @@ Thumbs.db
 
 # Claude Code session data
 .claude/
+.agents/
+skills-lock.json
+
+# Downloaded ML models (large binaries — re-downloaded on first use)
+models/
+
+# Packaged extension zip (build artifact)
+*.zip
+
+# User app data written at runtime
+config.json
+counts.json
+settings.json
 
 # Landing page lives in its own repo (slopprox-website)
 landing-page/
