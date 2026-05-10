@@ -37,5 +37,11 @@ config.json
 counts.json
 settings.json
 
+# Tests and evaluation scripts
+test/
+__mocks__/
+jest.config.js
+eval/
+
 # Landing page lives in its own repo (slopprox-website)
 landing-page/
