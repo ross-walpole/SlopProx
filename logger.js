@@ -44,7 +44,7 @@ function rotateIfNeeded(filePath, maxSize) {
 
 function debugLog(msg) {
   const anonymized = msg.replace(/https?:\/\/[^ \t\r\n]+/g, url => {
-    const hash = crypto.createHash('sha256').update(_LOG_SALT + url).digest('hex').slice(0, 8);
+    const hash = crypto.createHash('sha256').update(_LOG_SALT + url).digest('hex').slice(0, 16);
     return `http://[redacted-${hash}]`;
   });
   const ts = new Date().toISOString();
@@ -59,7 +59,7 @@ function debugLog(msg) {
 
 function logError(err) {
   const anonymized = (err.stack || err.toString()).replace(/https?:\/\/[^ \t\r\n]+/g, url => {
-    const hash = crypto.createHash('sha256').update(_LOG_SALT + url).digest('hex').slice(0, 8);
+    const hash = crypto.createHash('sha256').update(_LOG_SALT + url).digest('hex').slice(0, 16);
     return `http://[redacted-${hash}]`;
   });
   const ts = new Date().toISOString();

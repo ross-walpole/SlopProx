@@ -13,6 +13,7 @@ const SEND_CHANNELS = [
   'install-update',
   'check-for-updates',
   'add-bypass', 'remove-bypass',
+  'add-trusted-pattern', 'remove-trusted-pattern',
 ];
 
 const INVOKE_CHANNELS = [
@@ -34,7 +35,9 @@ const RECEIVE_CHANNELS = [
   'update-check-start', 'update-check-complete', 'update-check-error',
   'suggest-bypass',
   'bypass-domains',
+  'trusted-patterns',
   'classification-entry',
+  'proxy-start-failed',
 ];
 
 contextBridge.exposeInMainWorld('electronAPI', {

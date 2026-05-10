@@ -21,10 +21,11 @@
     '.article-body p',
   ].join(', ');
 
-  const MIN_LEN         = 60;
-  const IMG_MIN_PX      = 300;
-  const IMG_DISP_MIN_PX = 200;
-  const IMG_CONF_FORCE  = 92;
+  // These are updated from the server's /status config on every poll cycle.
+  let MIN_LEN         = 50;
+  let IMG_MIN_PX      = 300;
+  let IMG_DISP_MIN_PX = 200;
+  let IMG_CONF_FORCE  = 92;
 
   // Hover events that trigger video previews on thumbnail containers.
   // Blocked in capture phase during classification so preview cannot start
@@ -210,10 +211,26 @@
       const resp = await chrome.runtime.sendMessage({ type: 'status' });
       if (!resp?.ok) return;
       const data = resp.data;
-      const wasEnabled = filterEnabled;
+      const patterns = data.trustedPatterns || [];
+      if (patterns.length && patterns.some(p => location.href.startsWith(p))) {
+        filterEnabled = false;
+        observer.disconnect();
+        imageObserver.disconnect();
+        clearInterval(statusTimer);
+        return;
+      }
+      const wasEnabled      = filterEnabled;
+      const wasImageEnabled = imageDetectionEnabled;
       filterEnabled         = data.enabled ?? true;
       imageDetectionEnabled = data.imageDetectionEnabled ?? false;
       youtubeFilterEnabled  = data.youtubeFilterEnabled ?? true;
+
+      if (data.config) {
+        if (data.config.textMinLength    != null) MIN_LEN         = data.config.textMinLength;
+        if (data.config.imageMinNaturalPx != null) IMG_MIN_PX     = data.config.imageMinNaturalPx;
+        if (data.config.imageMinDisplayPx != null) IMG_DISP_MIN_PX = data.config.imageMinDisplayPx;
+        if (data.config.imageForceConfidence != null) IMG_CONF_FORCE = data.config.imageForceConfidence;
+      }
 
       if (wasEnabled && !filterEnabled) {
         document.querySelectorAll('.sf-card-placeholder').forEach(p => {
@@ -221,12 +238,13 @@
             p._sfCard.style.display = p._sfCardDisplay || '';
             delete p._sfCard.dataset.sfCardBlurred;
           }
-          p.remove();
+          (p.parentElement?.dataset?.sfWrapper ? p.parentElement : p).remove();
         });
         document.querySelectorAll('.sf-text-placeholder').forEach(p => {
           const el = p._sfEl;
-          if (el) { el.classList.remove('sf-content'); delete el.dataset.slopBlurred; p.replaceWith(el); }
-          else p.remove();
+          const wrapper = p.parentElement?.dataset?.sfWrapper ? p.parentElement : p;
+          if (el) { el.classList.remove('sf-content'); delete el.dataset.slopBlurred; wrapper.replaceWith(el); }
+          else wrapper.remove();
         });
         document.querySelectorAll('.sf-img-placeholder').forEach(p => {
           if (p._sfTarget) {
@@ -254,6 +272,28 @@
         observer.disconnect();
         imageObserver.disconnect();
         clearInterval(statusTimer);
+      }
+
+      // Re-queue images that loaded before image detection was ready.
+      // The IntersectionObserver unobserves each image before calling classifyImage,
+      // so any image seen while imageDetectionEnabled=false is permanently dropped.
+      // Reset their sfImgChecked marker so watchImage re-observes them.
+      if (!wasImageEnabled && imageDetectionEnabled && filterEnabled) {
+        document.querySelectorAll('img[src]').forEach(img => {
+          if (img.dataset.sfImgChecked === 'watching' && !img.dataset.sfImgBlurred) {
+            delete img.dataset.sfImgChecked;
+            watchImage(img);
+          }
+        });
+      }
+
+      // Re-scan text elements whose previous classify call failed (API unavailable /
+      // token not yet acquired). slopChecked is cleared on failure so they are eligible.
+      if (filterEnabled && !document.documentElement.dataset.sfProxy) {
+        _scanCardsIn(document.body);
+        document.querySelectorAll(TEXT_SEL).forEach(el => {
+          if (!el.dataset.slopChecked) classifyText(el);
+        });
       }
     } catch (err) { _SF_DEBUG('poll-status', err); }
   }
@@ -300,6 +340,7 @@
 
   function applyCardSlop(card, confidence, type, btnText, method) {
     if (card.dataset.sfCardBlurred || card.dataset.sfRevealed) return;
+    if (!card.parentElement) return; // detached from DOM while awaiting API
     card.dataset.sfCardBlurred = 'true';
 
     try {
@@ -313,9 +354,8 @@
       placeholder.className      = 'sf-card-placeholder';
       placeholder._sfCard        = card;
       placeholder._sfCardDisplay = savedDisplay === 'none' ? 'block' : savedDisplay;
-      // Lock to the original element's exact rendered dimensions so the
-      // placeholder never expands beyond the space the card already occupied.
-      placeholder.style.width  = rect.width  + 'px';
+      // Width is handled by CSS (width:100%). Height is locked so the page
+      // doesn't jump when the card is hidden.
       placeholder.style.height = Math.max(rect.height, 80) + 'px';
 
       installGuards(placeholder);
@@ -326,15 +366,38 @@
           <button class="sf-reveal-btn" type="button">${revealLabel}</button>
         </div>`;
 
+      // Wrap in a context-appropriate element to produce valid HTML.
+      // Inserting a bare <div> inside <ul>/<ol> or <table> causes browsers
+      // to hoist it out, placing the placeholder in the wrong position.
+      const parentTag = card.parentElement.tagName;
+      const cardTag   = card.tagName;
+      let toInsert = placeholder;
+      if (cardTag === 'LI' || parentTag === 'UL' || parentTag === 'OL') {
+        const li = document.createElement('li');
+        li.dataset.sfWrapper = 'true';
+        li.style.cssText = 'list-style:none;padding:0;margin:0';
+        li.appendChild(placeholder);
+        toInsert = li;
+      } else if (cardTag === 'TR' || parentTag === 'TBODY' || parentTag === 'THEAD' || parentTag === 'TFOOT' || parentTag === 'TABLE') {
+        const tr = document.createElement('tr');
+        tr.dataset.sfWrapper = 'true';
+        const td = document.createElement('td');
+        td.setAttribute('colspan', '999');
+        td.style.cssText = 'padding:0;border:none';
+        td.appendChild(placeholder);
+        tr.appendChild(td);
+        toInsert = tr;
+      }
+
       _wireRevealBtn(placeholder, () => {
         card.style.display = placeholder._sfCardDisplay;
         delete card.dataset.sfCardBlurred;
         card.dataset.sfRevealed = 'true';
-        placeholder.remove();
+        toInsert.remove();
       });
 
       card.style.display = 'none';
-      card.insertAdjacentElement('afterend', placeholder);
+      card.insertAdjacentElement('afterend', toInsert);
 
       const countKey = type === 'image' ? 'imagesBlocked' : 'textBlocked';
       chrome.storage.session.get(countKey).then(s => {
@@ -425,7 +488,10 @@
 
     try {
       const resp = await _batchClassifyText(text);
-      if (!resp?.ok) return;
+      if (!resp?.ok) {
+        delete card.dataset.sfCardTextChecked; // allow retry on next poll cycle
+        return;
+      }
       const { isSlop, confidence, method } = resp.data;
       if (isSlop) applyCardSlop(card, confidence, 'text', undefined, method);
     } catch (err) { _SF_DEBUG('classify-card', err); }
@@ -455,7 +521,10 @@
 
     try {
       const resp = await _batchClassifyText(getClassifyText(el));
-      if (!resp?.ok) return;
+      if (!resp?.ok) {
+        delete el.dataset.slopChecked; // allow retry on next poll cycle
+        return;
+      }
       const { isSlop, confidence, method } = resp.data;
       if (isSlop) applyTextSlop(el, confidence, method);
     } catch (err) { _SF_DEBUG('classify-text', err); }
@@ -471,6 +540,7 @@
 
     // ── Article / no-card context: inline paragraph placeholder ────
     if (el.dataset.slopBlurred) return;
+    if (!el.parentNode) return; // detached from DOM while awaiting API
     try {
       el.dataset.slopBlurred = 'true';
       el.classList.add('sf-content');
@@ -488,10 +558,14 @@
 
       // When el is a <li>, a bare <div> sibling is invalid HTML and browsers
       // may hoist it out of the list. Wrap the placeholder in a <li> instead.
-      const toInsert = el.tagName === 'LI'
-        ? Object.assign(document.createElement('li'), { style: 'list-style:none' })
-        : placeholder;
-      if (toInsert !== placeholder) toInsert.appendChild(placeholder);
+      let toInsert = placeholder;
+      if (el.tagName === 'LI') {
+        const li = document.createElement('li');
+        li.dataset.sfWrapper = 'true';
+        li.style.cssText = 'list-style:none;padding:0;margin:0';
+        li.appendChild(placeholder);
+        toInsert = li;
+      }
 
       _wireRevealBtn(placeholder, () => {
         el.classList.remove('sf-content');
@@ -689,9 +763,10 @@ function getPagePriorAdjustment() {
     delete img.dataset.sfQueued;
     delete img.dataset.sfProcessing;
     _clearScan(img);
-    // Restore any videos that were blocked when classification started.
-    // Without this, non-slop verdicts leave the card's videos permanently frozen.
-    if (container) unblockVideosNear(container, false);
+    if (container) {
+      unblockVideosNear(container, false);
+      _releaseContainerPos(container);
+    }
   }
 
   // Verdict = slop: transition the transparent shield into the visible
@@ -722,6 +797,7 @@ function getPagePriorAdjustment() {
       releaseHoverBlock();
       unblockVideosNear(container, true);
       shield.remove();
+      _releaseContainerPos(container);
     });
     installGuards(shield);
 
@@ -761,9 +837,7 @@ function getPagePriorAdjustment() {
       }
     }
 
-    if (getComputedStyle(container).position === 'static') {
-      container.style.position = 'relative';
-    }
+    _acquireContainerPos(container);
 
     const finalRect  = container.getBoundingClientRect();
     const fillsContainer =
@@ -784,6 +858,36 @@ function getPagePriorAdjustment() {
     }
 
     return { container, shieldStyle };
+  }
+
+  // ── Container position management ──────────────────────────────
+  // When classifyImage needs an absolutely-positioned shield it calls
+  // _acquireContainerPos to make the container position:relative.
+  // Every code path that removes the shield (abort or reveal) must call
+  // _releaseContainerPos so the change is reverted once no placeholders
+  // remain. Without this the container permanently becomes a positioning
+  // ancestor, breaking tooltips and dropdowns that rely on a distant ancestor.
+  function _acquireContainerPos(container) {
+    const n = parseInt(container.dataset.sfPosRef || '0');
+    if (n === 0 && getComputedStyle(container).position === 'static') {
+      container.style.position = 'relative';
+      container.dataset.sfPosOwned = 'true';
+    }
+    container.dataset.sfPosRef = String(n + 1);
+  }
+
+  function _releaseContainerPos(container) {
+    if (!container) return;
+    const n = Math.max(0, parseInt(container.dataset.sfPosRef || '0') - 1);
+    if (n === 0) {
+      delete container.dataset.sfPosRef;
+      if (container.dataset.sfPosOwned) {
+        delete container.dataset.sfPosOwned;
+        container.style.position = '';
+      }
+    } else {
+      container.dataset.sfPosRef = String(n);
+    }
   }
 
   // ── Capture-phase hover block ───────────────────────────────────
@@ -907,12 +1011,14 @@ function getPagePriorAdjustment() {
     img.dataset.sfImgBlurred = 'true';
     if (!img.parentNode) return;
 
+    let container;
     try {
       interceptFeedVideo(findAssociatedVideo(img));
       img.style.opacity       = '0';
       img.style.pointerEvents = 'none';
 
-      const { container, shieldStyle } = _prepareContainer(img);
+      const prepared = _prepareContainer(img); // also calls _acquireContainerPos
+      container = prepared.container;
       const releaseHoverBlock = _installHoverBlock(container);
 
       const placeholder = document.createElement('div');
@@ -921,7 +1027,7 @@ function getPagePriorAdjustment() {
       placeholder.style.position      = 'absolute';
       placeholder.style.zIndex        = '2147483647';
       placeholder.style.pointerEvents = 'auto';
-      Object.assign(placeholder.style, shieldStyle);
+      Object.assign(placeholder.style, prepared.shieldStyle);
 
       const nw = img.naturalWidth || parseInt(img.getAttribute('width') || '0', 10);
       if (nw > 0 && nw < 500) placeholder.classList.add('sf-compact');
@@ -939,6 +1045,7 @@ function getPagePriorAdjustment() {
         releaseHoverBlock();
         unblockVideosNear(container, true);
         placeholder.remove();
+        _releaseContainerPos(container);
       });
       installGuards(placeholder);
       container.appendChild(placeholder);
@@ -951,6 +1058,7 @@ function getPagePriorAdjustment() {
       img.style.opacity       = '';
       img.style.pointerEvents = '';
       delete img.dataset.sfImgBlurred;
+      _releaseContainerPos(container);
     }
   }
 

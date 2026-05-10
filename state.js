@@ -32,6 +32,8 @@ module.exports = {
     'api.github.com',
   ],
 
+  TRUSTED_PATTERNS: [],
+
   filteredCount: 0,
   adsBlocked: 0,
   imagesBlocked: 0,

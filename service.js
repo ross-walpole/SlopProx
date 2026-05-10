@@ -9,6 +9,7 @@ const { isAiSlop, isAiImage } = require('./classifier');
 const { debugLog, logError } = require('./logger');
 const state  = require('./state');
 const counts = require('./counts');
+const config = require('./config');
 
 const PORT = 8083;
 let server = null;
@@ -45,11 +46,13 @@ class TokenBucket {
   }
 }
 
-const _textBucket  = new TokenBucket(20, 20);
-const _imageBucket = new TokenBucket(5,   5);
+let _textBucket  = null;
+let _imageBucket = null;
 
 function start(safeSend) {
   if (server) return;
+  _textBucket  = new TokenBucket(config.get('textRateLimitPerSec'),  config.get('textRateLimitPerSec'));
+  _imageBucket = new TokenBucket(config.get('imageRateLimitPerSec'), config.get('imageRateLimitPerSec'));
 
   server = http.createServer(async (req, res) => {
     // ── CORS — only allow the extension's own origin ───────────────
@@ -75,21 +78,37 @@ function start(safeSend) {
 
     // ── GET /status ────────────────────────────────────────────────
     if (req.method === 'GET' && req.url === '/status') {
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({
+      const data = {
         enabled: state.FILTER_ENABLED,
+        adBlockEnabled: state.AD_BLOCKING_ENABLED,
         imageDetectionEnabled: state.IMAGE_DETECTION_ENABLED,
         youtubeFilterEnabled: state.YOUTUBE_FILTER_ENABLED,
-        token: SERVICE_TOKEN,
         adsBlocked: state.adsBlocked || 0,
-      }));
+        trustedPatterns: state.TRUSTED_PATTERNS || [],
+        // Extension-relevant config subset — applied by content.js on next poll.
+        config: {
+          textThreshold:        config.get('textThreshold'),
+          textMinLength:        config.get('textMinLength'),
+          imageThresholdPhoto:  config.get('imageThresholdPhoto'),
+          imageThresholdArt:    config.get('imageThresholdArt'),
+          imageMinNaturalPx:    config.get('imageMinNaturalPx'),
+          imageMinDisplayPx:    config.get('imageMinDisplayPx'),
+          imageForceConfidence: config.get('imageForceConfidence'),
+        },
+      };
+      // Always return the bootstrap token — the service only listens on 127.0.0.1 so
+      // all callers are local. Cross-origin POST routes are still protected by the
+      // CORS origin check above, so web pages cannot call /classify even with the token.
+      data.token = SERVICE_TOKEN;
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(data));
       return;
     }
 
     // ── Token validation ───────────────────────────────────────────
     const incomingToken = req.headers['x-slopfilter-token'] || '';
     const tokenRequired = req.method === 'POST' && (
-      req.url === '/classify' || req.url === '/classify-image'
+      req.url === '/classify' || req.url === '/classify-image' || req.url === '/youtube-block' || req.url === '/ad-count-report'
     );
     if (tokenRequired && incomingToken !== SERVICE_TOKEN) {
       res.writeHead(401); res.end(); return;
@@ -106,6 +125,42 @@ function start(safeSend) {
       return;
     }
 
+    // ── POST /ad-count-report ──────────────────────────────────────
+    // Extension reports the number of ad requests blocked by the DNR ruleset
+    // since the last poll. Body is a plain integer delta (e.g. "3").
+    if (req.method === 'POST' && req.url === '/ad-count-report') {
+      let body = '';
+      req.on('data', chunk => { body += chunk; if (body.length > 65536) { res.writeHead(413); res.end(); req.destroy(); } });
+      req.on('end', () => {
+        if (res.destroyed) return;
+        let delta = 0;
+        let hosts = [];
+        try {
+          const parsed = JSON.parse(body.trim());
+          delta = parsed.delta || 0;
+          hosts = Array.isArray(parsed.hosts) ? parsed.hosts : [];
+        } catch (_) {
+          delta = parseInt(body.trim(), 10);
+        }
+        if (Number.isFinite(delta) && delta > 0) {
+          state.adsBlocked += delta;
+          safeSend('ads-count', state.adsBlocked);
+          counts.schedule(state);
+          debugLog(`Ad block count +${delta} via extension DNR (total: ${state.adsBlocked})`);
+          const ts = Date.now();
+          const seen = new Set();
+          for (const host of hosts) {
+            if (!seen.has(host)) {
+              seen.add(host);
+              safeSend('classification-entry', { ts, type: 'ad', outcome: 'blocked', target: host, confidence: null });
+            }
+          }
+        }
+        res.writeHead(204); res.end();
+      });
+      return;
+    }
+
     // ── POST /classify ─────────────────────────────────────────────
     if (req.method === 'POST' && req.url === '/classify') {
       if (!_textBucket.take()) { res.writeHead(429); res.end(); return; }
@@ -118,7 +173,7 @@ function start(safeSend) {
         if (res.destroyed) return;
         const text = body.trim();
 
-        if (text.length < 50 || !state.FILTER_ENABLED) {
+        if (text.length < config.get('textMinLength') || !state.FILTER_ENABLED) {
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ isSlop: false, confidence: 0 }));
           return;
@@ -126,7 +181,7 @@ function start(safeSend) {
 
         try {
           const { confidence, method } = await isAiSlop(text);
-          const isSlop = confidence > 0.45;
+          const isSlop = confidence > config.get('textThreshold');
           debugLog(`Text [${isSlop ? 'SLOP' : 'real'} ${Math.round(confidence * 100)}% ${method}]: "${text.slice(0, 80).replace(/\n/g, ' ')}"`);
           if (isSlop) {
             state.filteredCount++;
@@ -167,7 +222,9 @@ function start(safeSend) {
 
         try {
           const { score, style } = await isAiImage(imageUrl);
-          const threshold = 0.75;
+          const threshold = style === 'photo'
+            ? config.get('imageThresholdPhoto')
+            : config.get('imageThresholdArt');
           const isAi = score > threshold;
           if (isAi) {
             state.imagesBlocked++;

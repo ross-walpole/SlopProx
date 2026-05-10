@@ -1,0 +1,21 @@
+[
+  {
+    "id": 1,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "requestDomains": [
+        "doubleclick.net", "googlesyndication.com", "google-analytics.com", "googletagmanager.com",
+        "adnxs.com", "advertising.com", "amazon-adsystem.com", "taboola.com", "outbrain.com",
+        "criteo.com", "pubmatic.com", "rubiconproject.com", "openx.net", "casalemedia.com",
+        "adform.net", "adsafeprotected.com", "adsrvr.org", "bidswitch.net",
+        "smartadserver.com", "equativ.com", "mgid.com", "adtech.com", "2o7.net", "omtrdc.net",
+        "scorecardresearch.com", "quantserve.com", "krxd.net", "demdex.net", "dm-dna.com"
+      ],
+      "resourceTypes": [
+        "sub_frame", "stylesheet", "script", "image", "font",
+        "object", "xmlhttprequest", "ping", "media", "websocket", "other"
+      ]
+    }
+  }
+]

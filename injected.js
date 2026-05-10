@@ -11,6 +11,9 @@
   if (window.__sfLoaded) return;
   window.__sfLoaded = true;
 
+  const _trustedPatterns = window.__sfTrustedPatterns || [];
+  if (_trustedPatterns.length && _trustedPatterns.some(p => location.href.startsWith(p))) return;
+
   // Signal to the browser extension's content.js (which runs in an isolated world
   // and cannot see window.__sfLoaded) that the proxy is handling text classification.
   // DOM attributes are shared across worlds, so this is the correct coordination mechanism.
@@ -168,6 +171,7 @@
   // ── Card placeholder (mirrors content.js applyCardSlop) ─────────
   function applyCardSlop(card, confidence, type, btnText, method) {
     if (card.dataset.sfCardBlurred || card.dataset.sfRevealed) return;
+    if (!card.parentElement) return; // detached from DOM while awaiting API
     card.dataset.sfCardBlurred = 'true';
 
     try {
@@ -181,7 +185,6 @@
       placeholder.className      = 'sf-card-placeholder';
       placeholder._sfCard        = card;
       placeholder._sfCardDisplay = savedDisplay === 'none' ? 'block' : savedDisplay;
-      placeholder.style.width  = rect.width  + 'px';
       placeholder.style.height = Math.max(rect.height, 80) + 'px';
 
       installGuards(placeholder);
@@ -192,15 +195,35 @@
           <button class="sf-reveal-btn" type="button">${revealLabel}</button>
         </div>`;
 
+      const parentTag = card.parentElement.tagName;
+      const cardTag   = card.tagName;
+      let toInsert = placeholder;
+      if (cardTag === 'LI' || parentTag === 'UL' || parentTag === 'OL') {
+        const li = document.createElement('li');
+        li.dataset.sfWrapper = 'true';
+        li.style.cssText = 'list-style:none;padding:0;margin:0';
+        li.appendChild(placeholder);
+        toInsert = li;
+      } else if (cardTag === 'TR' || parentTag === 'TBODY' || parentTag === 'THEAD' || parentTag === 'TFOOT' || parentTag === 'TABLE') {
+        const tr = document.createElement('tr');
+        tr.dataset.sfWrapper = 'true';
+        const td = document.createElement('td');
+        td.setAttribute('colspan', '999');
+        td.style.cssText = 'padding:0;border:none';
+        td.appendChild(placeholder);
+        tr.appendChild(td);
+        toInsert = tr;
+      }
+
       _wireRevealBtn(placeholder, () => {
         card.style.display = placeholder._sfCardDisplay;
         delete card.dataset.sfCardBlurred;
         card.dataset.sfRevealed = 'true';
-        placeholder.remove();
+        toInsert.remove();
       });
 
       card.style.display = 'none';
-      card.insertAdjacentElement('afterend', placeholder);
+      card.insertAdjacentElement('afterend', toInsert);
     } catch (err) { _sfDebug('apply-card-slop', err); }
   }
 
@@ -213,6 +236,7 @@
     if (card) { applyCardSlop(card, confidence, 'text', undefined, method); return; }
 
     if (el.dataset.slopBlurred) return;
+    if (!el.parentNode) return; // detached from DOM while awaiting API
     try {
       el.dataset.slopBlurred = 'true';
       el.classList.add('sf-content'); // display:none via CSS
@@ -228,12 +252,14 @@
           <button class="sf-reveal-btn" type="button">Show text</button>
         </div>`;
 
-      // When el is a <li>, a bare <div> sibling is invalid HTML — browsers
-      // may hoist it out of the list and render it in the wrong position.
-      const toInsert = el.tagName === 'LI'
-        ? Object.assign(document.createElement('li'), { style: 'list-style:none' })
-        : placeholder;
-      if (toInsert !== placeholder) toInsert.appendChild(placeholder);
+      let toInsert = placeholder;
+      if (el.tagName === 'LI') {
+        const li = document.createElement('li');
+        li.dataset.sfWrapper = 'true';
+        li.style.cssText = 'list-style:none;padding:0;margin:0';
+        li.appendChild(placeholder);
+        toInsert = li;
+      }
 
       _wireRevealBtn(placeholder, () => {
         el.classList.remove('sf-content');
@@ -251,10 +277,13 @@
   }
 
   // ── Status polling ──────────────────────────────────────────────
+  let _pollFailCount = 0;
+
   async function pollStatus() {
     try {
       const r = await fetch(STATUS_URL, { signal: AbortSignal.timeout(800) });
       const data = await r.json();
+      _pollFailCount = 0;
       const { enabled, youtubeFilterEnabled: ytEnabled } = data;
       if (filterEnabled && !enabled) {
         document.querySelectorAll('.sf-content').forEach(el => el.classList.remove('sf-content'));
@@ -264,7 +293,17 @@
       }
       filterEnabled = enabled;
       if (typeof ytEnabled === 'boolean') youtubeFilterEnabled = ytEnabled;
-    } catch (err) { _sfDebug('poll-status', err); }
+    } catch (err) {
+      _sfDebug('poll-status', err);
+      _pollFailCount++;
+      // After 3 consecutive failures (~6 s) assume the proxy has stopped.
+      // Remove the sfProxy signal so content.js can take over text classification.
+      if (_pollFailCount >= 3) {
+        delete document.documentElement.dataset.sfProxy;
+        observer.disconnect();
+        clearInterval(statusTimer);
+      }
+    }
   }
 
   // ── YouTube AI-label filter ─────────────────────────────────────
