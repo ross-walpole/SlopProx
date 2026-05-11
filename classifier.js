@@ -614,7 +614,10 @@ async function _loadModel2(onStatus, _attempt = 1) {
 //   - combinedScore = aiScore * (1 - realScore), threshold > 0.95
 //   - ~84 MB INT8 quantized
 
-const AI_SOURCE_MODEL_PATH = path.join(__dirname, 'models', 'ai-source-detector-onnx');
+const _modelALocal = path.join(__dirname, 'models', 'ai-source-detector-onnx');
+const AI_SOURCE_MODEL_PATH = fs.existsSync(_modelALocal)
+  ? _modelALocal
+  : path.join(process.resourcesPath, 'models', 'ai-source-detector-onnx');
 
 // ── Image fetching ───────────────────────────────────────────────
 // Fetch image bytes once and reuse for both C2PA and ML — avoids a

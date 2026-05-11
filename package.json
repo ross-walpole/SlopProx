@@ -29,8 +29,13 @@
       "owner": "ross-walpole",
       "repo": "SlopProx"
     },
+    "files": [
+      "**/*",
+      "!models/**"
+    ],
     "extraResources": [
-      { "from": "extension", "to": "extension" }
+      { "from": "extension", "to": "extension" },
+      { "from": "models/ai-source-detector-onnx", "to": "models/ai-source-detector-onnx" }
     ],
     "asarUnpack": [
       "**/node_modules/sharp/**"

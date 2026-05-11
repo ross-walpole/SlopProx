@@ -77,7 +77,10 @@ function _getSettings() {
   // Auto-migrate: if imageModelsReady was never persisted but the model file
   // is already on disk (installed before the settings system existed), mark ready.
   if (!saved.imageModelsReady) {
-    const modelFile = path.join(__dirname, 'models', 'ai-source-detector-onnx', 'onnx', 'model_quantized.onnx');
+    const _modelBase = app.isPackaged
+      ? path.join(process.resourcesPath, 'models', 'ai-source-detector-onnx')
+      : path.join(__dirname, 'models', 'ai-source-detector-onnx');
+    const modelFile = path.join(_modelBase, 'onnx', 'model_quantized.onnx');
     if (fs.existsSync(modelFile)) {
       saved.imageModelsReady = true;
       _saveSettings({ imageModelsReady: true });
