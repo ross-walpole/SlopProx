@@ -1,5 +1,7 @@
 # SlopProx: AI Slop Filter
 
+![SlopProx](1280-SP.png)
+
 A Windows desktop app that filters AI-generated content from the web in real time, across every browser, without configuration.
 
 **[slopprox.com](https://slopprox.com)** &nbsp;·&nbsp; **[SlopProx Pro](https://pro.slopprox.com)**
