@@ -22,11 +22,11 @@ const DEFAULTS = {
   // ── Text detection ─────────────────────────────────────────────
   // textThreshold: confidence (0–1) required to classify text as AI-generated.
   // Lower = more sensitive (more blocks, more false positives).
-  textThreshold:        0.45,
+  textThreshold:        0.60,
 
   // textMinLength: texts shorter than this are never sent for classification.
   // Raising this skips very short social posts; lowering catches short AI snippets.
-  textMinLength:        50,
+  textMinLength:        100,
 
   // textShortLength: texts below this length trigger the short-text gate.
   // The gate caps model confidence to require heuristic corroboration.
