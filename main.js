@@ -365,7 +365,11 @@ function createWindow() {
       setTimeout(() => safeSend('cert-ready', true), 100);
 
     if (app.isPackaged)
-      setTimeout(() => autoUpdater.checkForUpdates().catch(err => logger.debugLog(`Auto-update check failed: ${err?.message}`)), 5000);
+      setTimeout(() => autoUpdater.checkForUpdates().catch(err => {
+        const msg = err?.message ?? '';
+        if (!msg.includes('404') && !msg.includes('Unable to find latest version'))
+          logger.debugLog(`Auto-update check failed: ${msg}`);
+      }), 5000);
   });
 
   mainWindow.on('close', e => {
