@@ -4,6 +4,15 @@
   "version": "1.0.0",
   "license": "GPL-3.0-only",
   "description": "SlopProx AI Slop Filter — Reclaim the internet from AI-generated slop.",
+  "homepage": "https://slopprox.com",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ross-walpole/SlopProx.git"
+  },
+  "bugs": {
+    "url": "https://github.com/ross-walpole/SlopProx/issues"
+  },
+  "keywords": ["ai-detection", "slop", "chrome-extension", "electron", "privacy", "onnx"],
   "main": "main.js",
   "scripts": {
     "start": "electron .",
