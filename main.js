@@ -199,6 +199,12 @@ function getExtDestPath() {
   return path.join(app.getPath('userData'), 'extension');
 }
 
+function getExtSourcePath() {
+  return app.isPackaged
+    ? path.join(process.resourcesPath, 'extension')
+    : path.join(__dirname, 'extension');
+}
+
 function isExtensionInstalled() {
   const dest = extDestPath || getExtDestPath();
   return fs.existsSync(path.join(dest, 'manifest.json'));
@@ -208,7 +214,7 @@ function installExtension() {
   try {
     const dest = getExtDestPath();
     extDestPath = dest;
-    fs.cpSync(path.join(__dirname, 'extension'), dest, { recursive: true, force: true });
+    fs.cpSync(getExtSourcePath(), dest, { recursive: true, force: true });
     logger.debugLog(`Extension copied to: ${dest}`);
 
     openBrowserExtensionsPage(err => {
@@ -411,7 +417,7 @@ app.whenReady().then(async () => {
   try {
     const extDest = getExtDestPath();
     if (fs.existsSync(path.join(extDest, 'manifest.json'))) {
-      fs.cpSync(path.join(__dirname, 'extension'), extDest, { recursive: true, force: true });
+      fs.cpSync(getExtSourcePath(), extDest, { recursive: true, force: true });
       logger.debugLog('Extension files synced to userData');
     }
   } catch (e) { logger.logError(e); }

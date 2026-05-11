@@ -29,9 +29,11 @@
       "owner": "ross-walpole",
       "repo": "SlopProx"
     },
+    "extraResources": [
+      { "from": "extension", "to": "extension" }
+    ],
     "asarUnpack": [
-      "**/node_modules/sharp/**",
-      "extension/**"
+      "**/node_modules/sharp/**"
     ]
   },
   "dependencies": {
