@@ -29,15 +29,16 @@
     if (!resp?.ok) throw new Error('no response');
     const data = resp.data;
 
-    dot.className   = 'status-dot ' + (data.enabled ? 'on' : 'off');
-    statusLabel.textContent = data.enabled ? 'LIVE' : 'PAUSED';
+    const anyActive = data.enabled || data.imageDetectionEnabled || data.youtubeFilterEnabled || data.adBlockEnabled;
+    dot.className   = 'status-dot ' + (anyActive ? 'on' : 'off');
+    statusLabel.textContent = anyActive ? 'LIVE' : 'PAUSED';
 
     if (typeof data.adsBlocked === 'number') {
       adsCount.textContent = data.adsBlocked.toLocaleString();
     }
 
     if (!data.enabled) {
-      footerText.textContent = 'Filtering paused';
+      footerText.textContent = 'Text filtering paused';
     }
   } catch (_) {
     dot.className          = 'status-dot off';

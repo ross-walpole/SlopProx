@@ -652,7 +652,7 @@ function getPagePriorAdjustment() {
   }
 
   async function classifyImage(img) {
-    if (!filterEnabled || !imageDetectionEnabled) return;
+    if (!imageDetectionEnabled) return;
     if (img.dataset.sfQueued || img.dataset.sfProcessing || shouldSkipImage(img)) return;
 
     const srcKey = img.src.split('?')[0];
@@ -1292,7 +1292,7 @@ function getPagePriorAdjustment() {
   const pendingNodes = new Set();
 
   const observer = new MutationObserver(mutations => {
-    if (!filterEnabled) return;
+    if (!filterEnabled && !imageDetectionEnabled && !youtubeFilterEnabled) return;
     for (const m of mutations) {
       for (const node of m.addedNodes) {
         if (node.nodeType !== 1) continue;
