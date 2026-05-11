@@ -84,6 +84,9 @@ function start(safeSend) {
         imageDetectionEnabled: state.IMAGE_DETECTION_ENABLED,
         youtubeFilterEnabled: state.YOUTUBE_FILTER_ENABLED,
         adsBlocked: state.adsBlocked || 0,
+        textBlocked: state.filteredCount || 0,
+        imagesBlocked: state.imagesBlocked || 0,
+        youtubeBlocked: state.youtubeBlocked || 0,
         trustedPatterns: state.TRUSTED_PATTERNS || [],
         // Extension-relevant config subset — applied by content.js on next poll.
         config: {

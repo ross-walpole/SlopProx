@@ -14,15 +14,10 @@
   const imgCount   = document.getElementById('imgCount');
   const ytCount    = document.getElementById('ytCount');
 
-  // Session counters tracked by content scripts
-  const stored = await chrome.storage.session
-    .get(['textBlocked', 'imagesBlocked', 'youtubeBlocked'])
-    .catch(() => ({}));
-
-  textCount.textContent = (stored.textBlocked    || 0).toLocaleString();
-  imgCount.textContent  = (stored.imagesBlocked  || 0).toLocaleString();
-  ytCount.textContent   = (stored.youtubeBlocked || 0).toLocaleString();
-  adsCount.textContent  = '—'; // updated from /status below
+  adsCount.textContent  = '—';
+  textCount.textContent = '—';
+  imgCount.textContent  = '—';
+  ytCount.textContent   = '—';
 
   try {
     const resp = await chrome.runtime.sendMessage({ type: 'status' });
@@ -33,9 +28,10 @@
     dot.className   = 'status-dot ' + (anyActive ? 'on' : 'off');
     statusLabel.textContent = anyActive ? 'LIVE' : 'PAUSED';
 
-    if (typeof data.adsBlocked === 'number') {
-      adsCount.textContent = data.adsBlocked.toLocaleString();
-    }
+    if (typeof data.adsBlocked     === 'number') adsCount.textContent  = data.adsBlocked.toLocaleString();
+    if (typeof data.textBlocked    === 'number') textCount.textContent = data.textBlocked.toLocaleString();
+    if (typeof data.imagesBlocked  === 'number') imgCount.textContent  = data.imagesBlocked.toLocaleString();
+    if (typeof data.youtubeBlocked === 'number') ytCount.textContent   = data.youtubeBlocked.toLocaleString();
 
     if (!data.enabled) {
       footerText.textContent = 'Text filtering paused';
