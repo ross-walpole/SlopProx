@@ -54,6 +54,7 @@ const SETTINGS_DEFAULTS = {
   defaultImageDetection: false,
   defaultYoutubeFilter:  true,
   imageModelsReady:      false,
+  extensionInstalled:    false,
   PROXY_ENABLED:   false,
   BYPASS_DOMAINS:  state.BYPASS_DOMAINS.slice(),
   TRUSTED_PATTERNS: [],
@@ -153,6 +154,8 @@ function installCert(revertOnFail = false) {
 }
 
 // ── Extension management ──────────────────────────────────────────
+const CHROME_WEB_STORE_URL = 'https://chromewebstore.google.com/detail/slopprox/nfbpghkbijdkkfbceienbgbjkeobglib';
+
 // Browsers supported for opening the extensions management page.
 const BROWSER_MAP = [
   ['Brave',   'brave.exe',   'brave://extensions'],
@@ -210,25 +213,12 @@ function getExtSourcePath() {
 
 function isExtensionInstalled() {
   const dest = extDestPath || getExtDestPath();
-  return fs.existsSync(path.join(dest, 'manifest.json'));
+  if (fs.existsSync(path.join(dest, 'manifest.json'))) return true;
+  return !!_loadSettings().extensionInstalled;
 }
 
 function installExtension() {
-  try {
-    const dest = getExtDestPath();
-    extDestPath = dest;
-    fs.cpSync(getExtSourcePath(), dest, { recursive: true, force: true });
-    logger.debugLog(`Extension copied to: ${dest}`);
-
-    openBrowserExtensionsPage(err => {
-      if (err) logger.logError(err);
-      safeSend('extension-install-ready', dest);
-      safeSend('extension-installed', isExtensionInstalled());
-    });
-  } catch (err) {
-    logger.logError(err);
-    safeSend('status-update', 'Extension copy failed — see debug log');
-  }
+  shell.openExternal(CHROME_WEB_STORE_URL).catch(err => logger.logError(err));
 }
 
 // ── Image model loading ───────────────────────────────────────────
@@ -511,10 +501,14 @@ ipcMain.on('toggle-proxy',           toggleProxy);
 ipcMain.on('reinstall-cert', () => installCert(false));
 
 ipcMain.on('install-extension',     installExtension);
+ipcMain.on('mark-extension-installed', () => {
+  _saveSettings({ extensionInstalled: true });
+  safeSend('extension-installed', true);
+});
 ipcMain.on('open-extension-folder', () => {
   const dest = extDestPath || getExtDestPath();
-  if (fs.existsSync(dest)) shell.showItemInFolder(dest);
-  else shell.openPath(path.join(__dirname, 'extension'));
+  if (fs.existsSync(path.join(dest, 'manifest.json'))) shell.showItemInFolder(dest);
+  else shell.openExternal(CHROME_WEB_STORE_URL).catch(() => {});
 });
 
 ipcMain.on('reset-all', () => {

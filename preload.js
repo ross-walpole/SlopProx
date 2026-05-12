@@ -8,7 +8,7 @@ const SEND_CHANNELS = [
   'toggle-filter', 'toggle-adblock', 'toggle-image-detection', 'toggle-youtube-filter',
   'toggle-proxy',
   'reset-all', 'open-debug-log', 'reinstall-cert',
-  'install-extension', 'open-extension-folder', 'open-external',
+  'install-extension', 'mark-extension-installed', 'open-extension-folder', 'open-external',
   'set-setting',
   'install-update',
   'check-for-updates',

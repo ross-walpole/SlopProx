@@ -552,11 +552,7 @@
       <div class="flex items-center gap-2 mb-5">
         <div class="step-dot border border-tb2 text-gd" id="dot1">1</div>
         <div class="flex-1 h-px bg-tb" id="line1"></div>
-        <div class="step-dot border border-tb2 text-gd" id="dot2">2</div>
-        <div class="flex-1 h-px bg-tb" id="line2"></div>
-        <div class="step-dot border border-tb2 text-gd" id="dot3">3</div>
-        <div class="flex-1 h-px bg-tb" id="line3"></div>
-        <div class="step-dot border border-tb2 text-gd" id="dot4">✓</div>
+        <div class="step-dot border border-tb2 text-gd" id="dot2">✓</div>
       </div>
 
       <div class="step active" id="step1">
@@ -565,59 +561,27 @@
             <circle cx="22" cy="22" r="17" fill="none" stroke="rgba(109,184,138,0.12)" stroke-width="2.5"/>
             <circle cx="22" cy="22" r="17" fill="none" stroke="#6db88a" stroke-width="2.5" stroke-dasharray="28 79" stroke-linecap="round" style="filter:drop-shadow(0 0 5px rgba(109,184,138,0.4))"/>
           </svg>
-          <div class="text-gb font-semibold text-[12px] mb-2 tracking-wide" id="step1Title">Opening browser…</div>
+          <div class="text-gb font-semibold text-[12px] mb-2 tracking-wide">Opening Chrome Web Store…</div>
           <p class="text-g text-[10px] leading-relaxed mb-4">
-            Your browser is opening. Copy the address below and<br>
-            paste it in your address bar to reach Extensions:
+            A tab is opening to the extension store. If it<br>
+            doesn't appear, copy the link and paste it in your browser:
           </p>
           <div class="bg-t3 border border-tb rounded p-2.5 flex items-center justify-between gap-2 mb-4">
-            <span class="text-g font-mono text-[10px]" id="extUrlDisplay">chrome://extensions</span>
+            <span class="text-g font-mono text-[10px] truncate">chromewebstore.google.com/…/slopprox</span>
             <button id="copyExtUrl" class="text-m hover:text-mb text-[10px] font-medium shrink-0 transition-colors tracking-wide">COPY</button>
           </div>
-          <div class="text-g text-[9.5px] tracking-wide">Moving on in <span id="step1Countdown">3</span>…</div>
+          <div class="text-g text-[9.5px] tracking-wide">Moving on in <span id="step1Countdown">2</span>…</div>
         </div>
       </div>
 
       <div class="step" id="step2">
-        <div class="font-semibold text-[11px] text-gb mb-2 tracking-widest">ENABLE DEVELOPER MODE</div>
-        <p class="text-g text-[10px] leading-relaxed mb-3">
-          In the top-right of the Extensions page, turn on
-          <span class="text-g font-medium">Developer mode</span>.
-          The toolbar expands to show <span class="text-g font-medium">"Load unpacked"</span>.
-        </p>
-        <div class="bg-t3 border border-tb rounded p-3 mb-4 flex items-center gap-3">
-          <span class="text-gd text-[11px] font-mono shrink-0">[ DEV ]</span>
-          <div class="text-[10px] text-g leading-relaxed">
-            Top-right corner → <span class="text-g font-medium">Developer mode</span>
-            → toggle <span class="text-gb font-bold">ON</span>
-          </div>
-        </div>
-        <button id="step2Next" class="w-full border border-m text-m hover:bg-md/20 font-semibold text-[10px] py-2 rounded tracking-widest transition-colors">DEVELOPER MODE IS ON →</button>
-      </div>
-
-      <div class="step" id="step3">
-        <div class="font-semibold text-[11px] text-gb mb-2 tracking-widest">LOAD THE EXTENSION FOLDER</div>
-        <p class="text-g text-[10px] leading-relaxed mb-3">
-          Click <span class="text-g font-medium">"Load unpacked"</span>, then select the folder below.
-          The path is on your clipboard — just <span class="text-g font-medium">paste</span> in the file picker.
-        </p>
-        <div class="bg-t3 border border-tb rounded p-2.5 flex items-center gap-2 mb-2">
-          <input id="extPathInput" readonly class="path-input flex-1 bg-transparent text-g font-mono text-[10px] outline-none truncate" value="loading…">
-          <button id="copyPathBtn" class="text-m hover:text-mb text-[10px] font-medium shrink-0 transition-colors tracking-wide">COPY</button>
-        </div>
-        <button id="openFolderStep3" class="w-full border border-tb hover:border-tb2 text-gd hover:text-g text-[10px] font-medium py-1.5 rounded mb-3 transition-colors tracking-wide">[DIR] Open folder in Explorer</button>
-        <button id="step3Next" class="w-full border border-m text-m hover:bg-md/20 font-semibold text-[10px] py-2 rounded tracking-widest transition-colors">EXTENSION LOADED →</button>
-      </div>
-
-      <div class="step" id="step4">
         <div class="text-center py-2">
           <div class="text-[36px] mb-3" style="color:#6db88a; text-shadow:0 0 14px rgba(109,184,138,0.4)">◈</div>
-          <div class="text-gb font-bold text-[13px] mb-2 tracking-widest">EXTENSION INSTALLED</div>
+          <div class="text-gb font-bold text-[13px] mb-2 tracking-widest">ADD TO CHROME</div>
           <p class="text-g text-[10px] leading-relaxed mb-5">
-            The extension is now active. Enables filtering on
-            <span class="text-g font-medium">X.com, LinkedIn, Instagram</span>
-            and every site — and unlocks
-            <span class="text-cv font-medium">AI Image Detection</span>.
+            In the store tab, click <span class="text-gb font-bold">Add to Chrome</span> and confirm the prompt.
+            Return here when done — social media filtering and
+            <span class="text-cv font-medium">AI Image Detection</span> will activate automatically.
           </p>
           <button id="step4Done" class="w-full border border-g text-g hover:bg-gg font-semibold text-[10px] py-2 rounded tracking-widest transition-colors">DONE</button>
         </div>
@@ -885,7 +849,7 @@ window.addEventListener('load', () => {
   let extensionInstalled = false;
   let proxyEnabled = false;
   let recentlyShown = new Set();
-  let detectedExtUrl = 'chrome://extensions';
+  const STORE_URL = 'https://chromewebstore.google.com/detail/slopprox/nfbpghkbijdkkfbceienbgbjkeobglib';
   let _checkingUpdates = false;
 
   // ── Startup overlay ───────────────────────────────────────────────
@@ -1340,7 +1304,6 @@ window.addEventListener('load', () => {
   document.getElementById('termsLink').addEventListener('click', () => openModal('termsModal'));
 
   // ── Install modal ─────────────────────────────────────────────────
-  let extPath = '';
   let modalOpen = false;
   const installModal = document.getElementById('installModal');
 
@@ -1355,14 +1318,12 @@ window.addEventListener('load', () => {
   };
 
   function goToStep(n) {
-    [1,2,3,4].forEach(i => {
+    [1, 2].forEach(i => {
       document.getElementById('step' + i).classList.toggle('active', i === n);
       const dot = document.getElementById('dot' + i);
       dot.className = i === n ? dotColors.active : i < n ? dotColors.done : dotColors.pending;
     });
-    [1,2,3].forEach(i => {
-      document.getElementById('line' + i).className = i < n ? lineColors.active : lineColors.pending;
-    });
+    document.getElementById('line1').className = n > 1 ? lineColors.active : lineColors.pending;
   }
 
   function openInstallModal() {
@@ -1370,7 +1331,7 @@ window.addEventListener('load', () => {
     modalOpen = true;
     goToStep(1);
     installModal.classList.add('open');
-    let secs = 3;
+    let secs = 2;
     const tick = setInterval(() => {
       secs--;
       const el = document.getElementById('step1Countdown');
@@ -1390,15 +1351,14 @@ window.addEventListener('load', () => {
 
   document.getElementById('copyExtUrl').addEventListener('click', e => {
     uiSound('data');
-    navigator.clipboard.writeText(detectedExtUrl);
+    navigator.clipboard.writeText(STORE_URL);
     e.target.textContent = 'COPIED!';
     setTimeout(() => { e.target.textContent = 'COPY'; }, 1500);
   });
 
-  document.getElementById('step2Next').addEventListener('click', () => { uiSound('confirm'); goToStep(3); });
-  document.getElementById('step3Next').addEventListener('click', () => { uiSound('confirm'); goToStep(4); });
   document.getElementById('step4Done').addEventListener('click', () => {
     uiSound('success');
+    api.send('mark-extension-installed');
     closeInstallModal();
     setExtInstalled(true);
     switchTab('filters');
@@ -1409,24 +1369,6 @@ window.addEventListener('load', () => {
         document.getElementById('imageCard').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
       }, 350);
     }
-  });
-
-  api.on('extension-install-ready', p => {
-    extPath = p;
-    document.getElementById('extPathInput').value = p;
-    navigator.clipboard.writeText(p).catch(() => {});
-  });
-
-  document.getElementById('copyPathBtn').addEventListener('click', e => {
-    uiSound('data');
-    navigator.clipboard.writeText(extPath);
-    e.target.textContent = 'COPIED!';
-    setTimeout(() => { e.target.textContent = 'COPY'; }, 1500);
-  });
-
-  document.getElementById('openFolderStep3').addEventListener('click', () => {
-    uiSound('tap');
-    api.send('open-extension-folder');
   });
 
   // ── Settings toggles ──────────────────────────────────────────────
@@ -1565,7 +1507,6 @@ window.addEventListener('load', () => {
   });
 
   // ── External links ────────────────────────────────────────────────
-  api.on('browser-detected', url => { detectedExtUrl = url; });
 
   const extLinks = {
     textModelLink:  'https://huggingface.co/onnx-community/tmr-ai-text-detector',
