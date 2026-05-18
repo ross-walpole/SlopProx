@@ -556,33 +556,39 @@
       </div>
 
       <div class="step active" id="step1">
-        <div class="text-center py-2">
-          <svg class="ring-spinner mx-auto mb-3" viewBox="0 0 44 44" width="36" height="36" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-            <circle cx="22" cy="22" r="17" fill="none" stroke="rgba(109,184,138,0.12)" stroke-width="2.5"/>
-            <circle cx="22" cy="22" r="17" fill="none" stroke="#6db88a" stroke-width="2.5" stroke-dasharray="28 79" stroke-linecap="round" style="filter:drop-shadow(0 0 5px rgba(109,184,138,0.4))"/>
-          </svg>
-          <div class="text-gb font-semibold text-[12px] mb-2 tracking-wide">Opening Chrome Web Store…</div>
-          <p class="text-g text-[10px] leading-relaxed mb-4">
-            A tab is opening to the extension store. If it<br>
-            doesn't appear, copy the link and paste it in your browser:
-          </p>
-          <div class="bg-t3 border border-tb rounded p-2.5 flex items-center justify-between gap-2 mb-4">
-            <span class="text-g font-mono text-[10px] truncate">chromewebstore.google.com/…/slopprox</span>
-            <button id="copyExtUrl" class="text-m hover:text-mb text-[10px] font-medium shrink-0 transition-colors tracking-wide">COPY</button>
+        <div class="py-2">
+          <div class="text-gb font-semibold text-[11px] mb-3 tracking-wide text-center">Choose your browser</div>
+          <div class="flex flex-col gap-2.5 mb-4">
+            <button id="openChromeStore" class="w-full border border-tb2 hover:border-g text-g hover:text-gb text-[10px] py-2.5 px-3 rounded tracking-widest transition-colors flex items-center gap-2.5">
+              <span class="text-[14px]">⬡</span>
+              <span class="flex-1 text-left font-semibold">CHROME · EDGE · BRAVE · VIVALDI</span>
+              <span class="text-gd text-[9px]">chromewebstore.google.com</span>
+            </button>
+            <button id="openFirefoxStore" class="w-full border border-tb2 hover:border-m text-g hover:text-gb text-[10px] py-2.5 px-3 rounded tracking-widest transition-colors flex items-center gap-2.5">
+              <span class="text-[14px]" style="color:#ff7139">🦊</span>
+              <span class="flex-1 text-left font-semibold">FIREFOX</span>
+              <span class="text-gd text-[9px]">addons.mozilla.org</span>
+            </button>
           </div>
-          <div class="text-g text-[9.5px] tracking-wide">Moving on in <span id="step1Countdown">2</span>…</div>
+          <p class="text-gd text-[9.5px] text-center leading-relaxed">
+            A store tab will open. If it doesn't appear, use the copy button in the next step.
+          </p>
         </div>
       </div>
 
       <div class="step" id="step2">
         <div class="text-center py-2">
           <div class="text-[36px] mb-3" style="color:#6db88a; text-shadow:0 0 14px rgba(109,184,138,0.4)">◈</div>
-          <div class="text-gb font-bold text-[13px] mb-2 tracking-widest">ADD TO CHROME</div>
-          <p class="text-g text-[10px] leading-relaxed mb-5">
-            In the store tab, click <span class="text-gb font-bold">Add to Chrome</span> and confirm the prompt.
+          <div class="text-gb font-bold text-[13px] mb-2 tracking-widest" id="step2Title">ADD TO BROWSER</div>
+          <p class="text-g text-[10px] leading-relaxed mb-3">
+            In the store tab, click <span class="text-gb font-bold" id="step2ActionLabel">Add to Browser</span> and confirm the prompt.
             Return here when done — social media filtering and
             <span class="text-cv font-medium">AI Image Detection</span> will activate automatically.
           </p>
+          <div class="bg-t3 border border-tb rounded p-2.5 flex items-center justify-between gap-2 mb-4">
+            <span class="text-g font-mono text-[10px] truncate" id="step2StoreUrl">chromewebstore.google.com/…/slopprox</span>
+            <button id="copyExtUrl" class="text-m hover:text-mb text-[10px] font-medium shrink-0 transition-colors tracking-wide">COPY</button>
+          </div>
           <button id="step4Done" class="w-full border border-g text-g hover:bg-gg font-semibold text-[10px] py-2 rounded tracking-widest transition-colors">DONE</button>
         </div>
       </div>
@@ -849,7 +855,8 @@ window.addEventListener('load', () => {
   let extensionInstalled = false;
   let proxyEnabled = false;
   let recentlyShown = new Set();
-  const STORE_URL = 'https://chromewebstore.google.com/detail/slopprox/nfbpghkbijdkkfbceienbgbjkeobglib';
+  const STORE_URL         = 'https://chromewebstore.google.com/detail/slopprox/nfbpghkbijdkkfbceienbgbjkeobglib';
+  const FIREFOX_STORE_URL = 'https://addons.mozilla.org/en-US/firefox/addon/slopprox/';
   let _checkingUpdates = false;
 
   // ── Startup overlay ───────────────────────────────────────────────
@@ -1305,6 +1312,7 @@ window.addEventListener('load', () => {
 
   // ── Install modal ─────────────────────────────────────────────────
   let modalOpen = false;
+  let _selectedStoreUrl = STORE_URL;
   const installModal = document.getElementById('installModal');
 
   const dotColors = {
@@ -1331,27 +1339,35 @@ window.addEventListener('load', () => {
     modalOpen = true;
     goToStep(1);
     installModal.classList.add('open');
-    let secs = 2;
-    const tick = setInterval(() => {
-      secs--;
-      const el = document.getElementById('step1Countdown');
-      if (el) el.textContent = secs;
-      if (secs <= 0) { clearInterval(tick); goToStep(2); }
-    }, 1000);
   }
 
   function closeInstallModal() { installModal.classList.remove('open'); modalOpen = false; }
 
   document.getElementById('installExtBtn').addEventListener('click', () => {
     uiSound('confirm');
-    api.send('install-extension');
     openInstallModal();
   });
   installModal.addEventListener('click', e => { if (e.target === installModal) closeInstallModal(); });
 
+  function _chooseStore(isFirefox) {
+    const url        = isFirefox ? FIREFOX_STORE_URL : STORE_URL;
+    const ipcChannel = isFirefox ? 'install-extension-firefox' : 'install-extension';
+    const label      = isFirefox ? 'Add to Firefox' : 'Add to Chrome';
+    const display    = isFirefox ? 'addons.mozilla.org/…/slopprox' : 'chromewebstore.google.com/…/slopprox';
+    _selectedStoreUrl = url;
+    document.getElementById('step2Title').textContent       = isFirefox ? 'ADD TO FIREFOX' : 'ADD TO CHROME';
+    document.getElementById('step2ActionLabel').textContent = label;
+    document.getElementById('step2StoreUrl').textContent    = display;
+    api.send(ipcChannel);
+    goToStep(2);
+  }
+
+  document.getElementById('openChromeStore').addEventListener('click',  () => { uiSound('confirm'); _chooseStore(false); });
+  document.getElementById('openFirefoxStore').addEventListener('click', () => { uiSound('confirm'); _chooseStore(true);  });
+
   document.getElementById('copyExtUrl').addEventListener('click', e => {
     uiSound('data');
-    navigator.clipboard.writeText(STORE_URL);
+    navigator.clipboard.writeText(_selectedStoreUrl);
     e.target.textContent = 'COPIED!';
     setTimeout(() => { e.target.textContent = 'COPY'; }, 1500);
   });

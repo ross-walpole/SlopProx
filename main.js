@@ -155,6 +155,7 @@ function installCert(revertOnFail = false) {
 
 // ── Extension management ──────────────────────────────────────────
 const CHROME_WEB_STORE_URL = 'https://chromewebstore.google.com/detail/slopprox/nfbpghkbijdkkfbceienbgbjkeobglib';
+const FIREFOX_ADDON_URL    = 'https://addons.mozilla.org/en-US/firefox/addon/slopprox/';
 
 // Browsers supported for opening the extensions management page.
 const BROWSER_MAP = [
@@ -219,6 +220,10 @@ function isExtensionInstalled() {
 
 function installExtension() {
   shell.openExternal(CHROME_WEB_STORE_URL).catch(err => logger.logError(err));
+}
+
+function installFirefoxExtension() {
+  shell.openExternal(FIREFOX_ADDON_URL).catch(err => logger.logError(err));
 }
 
 // ── Image model loading ───────────────────────────────────────────
@@ -500,7 +505,8 @@ ipcMain.on('toggle-proxy',           toggleProxy);
 
 ipcMain.on('reinstall-cert', () => installCert(false));
 
-ipcMain.on('install-extension',     installExtension);
+ipcMain.on('install-extension',         installExtension);
+ipcMain.on('install-extension-firefox', installFirefoxExtension);
 ipcMain.on('mark-extension-installed', () => {
   _saveSettings({ extensionInstalled: true });
   safeSend('extension-installed', true);
