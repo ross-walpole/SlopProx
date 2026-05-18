@@ -23,7 +23,7 @@ Detected content is replaced with a placeholder. One click to reveal the origina
 
 SlopProx runs a local HTTPS proxy that intercepts browser traffic. A PAC file routes only real page navigations through it — assets, API calls, and WebSocket connections go direct. A self-signed CA certificate is installed once to enable HTTPS inspection.
 
-A companion Chrome extension handles social media card-level detection and image classification, communicating with the app via a local service on port 8083.
+A companion Chrome and Firefox extension handles social media card-level detection and image classification, communicating with the app via a local service on port 8083.
 
 ---
 
@@ -40,7 +40,11 @@ On first run, a CA certificate is installed into the Windows certificate store v
 Required for image detection, social media filtering, and YouTube feed badges.
 
 1. Open the dashboard and click **Install Extension**
-2. Load the copied extension as unpacked from the path shown in your browser's extensions page
+2. Choose your browser — Chrome Web Store or Firefox Add-ons — and install in one click
+
+Or install directly:
+- **Chrome / Edge / Brave / Vivaldi:** [Chrome Web Store](https://chromewebstore.google.com/detail/slopprox/nfbpghkbijdkkfbceienbgbjkeobglib)
+- **Firefox:** [Firefox Add-ons](https://addons.mozilla.org/en-US/firefox/addon/slopprox/)
 
 ---
 
@@ -72,14 +76,14 @@ The primary image model (~84 MB) is bundled via Git LFS. The two text models and
 | `logger.js` | Structured debug logging |
 | `pac.js` | PAC file routing rules |
 | `state.js` | Shared runtime feature flags |
-| `extension/` | Chrome MV3 extension |
+| `extension/` | Browser extension (Chrome MV3 + Firefox) |
 | `models/` | Bundled ONNX image model — Model A (Git LFS) |
 
 ---
 
 ## SlopProx Pro
 
-[SlopProx Pro](https://pro.slopprox.com) is a standalone Chrome extension for professional use — no desktop app, no proxy, no certificate. Designed for newsrooms, universities, and research teams. Right-click any text or image for a full forensic breakdown.
+[SlopProx Pro](https://pro.slopprox.com) is a standalone Chrome and Firefox extension for professional use — no desktop app, no proxy, no certificate. Designed for newsrooms, universities, and research teams. Right-click any text or image for a full forensic breakdown.
 
 ---
 
