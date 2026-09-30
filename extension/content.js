@@ -21,6 +21,11 @@
     '.article-body p',
   ].join(', ');
 
+  const IMAGE_SEL = [
+    'img[src]',
+    'img[srcset]'
+  ]
+
   // These are updated from the server's /status config on every poll cycle.
   let MIN_LEN         = 50;
   let IMG_MIN_PX      = 300;
@@ -39,6 +44,8 @@
   const _SF_DEBUG = (typeof chrome !== 'undefined' && chrome.runtime?.id)
     ? (ctx, err) => console.debug(`[sf:${ctx}]`, err?.message ?? err)
     : () => {};
+
+  const STORAGE = chrome.storage.session || chrome.storage.local;
 
   let filterEnabled         = true;
   let imageDetectionEnabled = false;
@@ -279,7 +286,7 @@
       // so any image seen while imageDetectionEnabled=false is permanently dropped.
       // Reset their sfImgChecked marker so watchImage re-observes them.
       if (!wasImageEnabled && imageDetectionEnabled && filterEnabled) {
-        document.querySelectorAll('img[src]').forEach(img => {
+        document.querySelectorAll(IMAGE_SEL).forEach(img => {
           if (img.dataset.sfImgChecked === 'watching' && !img.dataset.sfImgBlurred) {
             delete img.dataset.sfImgChecked;
             watchImage(img);
@@ -400,8 +407,8 @@
       card.insertAdjacentElement('afterend', toInsert);
 
       const countKey = type === 'image' ? 'imagesBlocked' : 'textBlocked';
-      chrome.storage.session.get(countKey).then(s => {
-        chrome.storage.session.set({ [countKey]: (s[countKey] || 0) + 1 });
+      STORAGE.get(countKey).then(s => {
+        STORAGE.set({ [countKey]: (s[countKey] || 0) + 1 });
       }).catch(() => {});
     } catch (err) { _SF_DEBUG('apply-card-slop', err); }
   }
@@ -575,8 +582,8 @@
 
       el.parentNode.insertBefore(toInsert, el);
 
-      chrome.storage.session.get('textBlocked').then(s => {
-        chrome.storage.session.set({ textBlocked: (s.textBlocked || 0) + 1 });
+      STORAGE.get('textBlocked').then(s => {
+        STORAGE.set({ textBlocked: (s.textBlocked || 0) + 1 });
       }).catch(() => {});
     } catch (err) { _SF_DEBUG('apply-text-slop', err); }
   }
@@ -612,7 +619,7 @@ function getPagePriorAdjustment() {
 
   // ── Image classification ────────────────────────────────────────
   function shouldSkipImage(img) {
-    const src = img.src || '';
+    const src = img.src || img.currentSrc || '';
     if (!src || src.startsWith('data:') || src.startsWith('blob:') || src.startsWith('chrome-extension:') || src.startsWith('moz-extension:')) return true;
     if (/\.gif(\?|$)/i.test(src)) return true;
     if (/\.svg(\?|$)/i.test(src)) return true;
@@ -655,7 +662,7 @@ function getPagePriorAdjustment() {
     if (!imageDetectionEnabled) return;
     if (img.dataset.sfQueued || img.dataset.sfProcessing || shouldSkipImage(img)) return;
 
-    const srcKey = img.src.split('?')[0];
+    const srcKey = (img.src || img.currentSrc).split('?')[0];
 
     // Cache hit: verdict is immediate — no race window, use applyImageSlop directly.
     if (pageImageCache.has(srcKey)) {
@@ -729,7 +736,7 @@ function getPagePriorAdjustment() {
     img.classList.add('sf-scanning');
 
     try {
-      const resp = await chrome.runtime.sendMessage({ type: 'classifyImage', url: img.src });
+      const resp = await chrome.runtime.sendMessage({ type: 'classifyImage', url: img.src || img.currentSrc });
 
       if (!resp?.ok) { _abortShield(img, shield, releaseHoverBlock); return; }
 
@@ -801,8 +808,8 @@ function getPagePriorAdjustment() {
     });
     installGuards(shield);
 
-    chrome.storage.session.get('imagesBlocked').then(s => {
-      chrome.storage.session.set({ imagesBlocked: (s.imagesBlocked || 0) + 1 });
+    STORAGE.get('imagesBlocked').then(s => {
+      STORAGE.set({ imagesBlocked: (s.imagesBlocked || 0) + 1 });
     }).catch(() => {});
   }
 
@@ -1050,8 +1057,8 @@ function getPagePriorAdjustment() {
       installGuards(placeholder);
       container.appendChild(placeholder);
 
-      chrome.storage.session.get('imagesBlocked').then(s => {
-        chrome.storage.session.set({ imagesBlocked: (s.imagesBlocked || 0) + 1 });
+      STORAGE.get('imagesBlocked').then(s => {
+        STORAGE.set({ imagesBlocked: (s.imagesBlocked || 0) + 1 });
       }).catch(() => {});
     } catch (err) {
       _SF_DEBUG('apply-image-slop', err);
@@ -1072,8 +1079,8 @@ function getPagePriorAdjustment() {
     // Proxy's injected.js handles counting when active — avoid double-counting.
     if (document.documentElement.dataset.sfProxy === '1') return;
     chrome.runtime.sendMessage({ type: 'youtubeBlock' }).catch(() => {});
-    chrome.storage.session.get('youtubeBlocked').then(s => {
-      chrome.storage.session.set({ youtubeBlocked: (s.youtubeBlocked || 0) + 1 });
+    STORAGE.get('youtubeBlocked').then(s => {
+      STORAGE.set({ youtubeBlocked: (s.youtubeBlocked || 0) + 1 });
     }).catch(() => {});
   }
 
@@ -1312,7 +1319,7 @@ function getPagePriorAdjustment() {
           _scanCardsIn(node);
           const textEls = node.matches?.(TEXT_SEL) ? [node] : [...node.querySelectorAll(TEXT_SEL)];
           for (const el of textEls) await classifyText(el);
-          const imgs = node.matches?.('img[src]') ? [node] : [...node.querySelectorAll('img[src]')];
+          const imgs = node.matches?.(IMAGE_SEL) ? [node] : [...node.querySelectorAll(IMAGE_SEL)];
           for (const img of imgs) watchImage(img);
         }
       }, 300);
@@ -1335,7 +1342,7 @@ function getPagePriorAdjustment() {
     setTimeout(() => {
       _scanCardsIn(document.body);
       document.querySelectorAll(TEXT_SEL).forEach(classifyText);
-      document.querySelectorAll('img[src]').forEach(watchImage);
+      document.querySelectorAll(IMAGE_SEL).forEach(watchImage);
       runYoutubeCheck();
     }, 400);
   }
@@ -1353,7 +1360,7 @@ function getPagePriorAdjustment() {
   setTimeout(() => {
     _scanCardsIn(document.body);
     document.querySelectorAll(TEXT_SEL).forEach(classifyText);
-    document.querySelectorAll('img[src]').forEach(watchImage);
+    document.querySelectorAll(IMAGE_SEL).forEach(watchImage);
     runYoutubeCheck();
   }, 300);
 })();
