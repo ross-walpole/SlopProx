@@ -10,6 +10,10 @@ const path   = require('path');
 const os     = require('os');
 const fs     = require('fs');
 const crypto = require('crypto');
+const dns    = require('dns');
+const http   = require('http');
+const https  = require('https');
+const net    = require('net');
 const sharp  = require('sharp');
 const { logError, debugLog } = require('./logger');
 const config = require('./config');
@@ -623,21 +627,95 @@ const AI_SOURCE_MODEL_PATH = fs.existsSync(_modelALocal)
 // Fetch image bytes once and reuse for both C2PA and ML — avoids a
 // second network round-trip that the HuggingFace pipeline would make
 // internally if given a URL.
+//
+// Image URLs come from arbitrary web pages, so loopback / private / link-local
+// destinations are refused. The address check runs inside the socket's DNS
+// lookup, so the address validated is the address connected to (no DNS
+// rebinding window), and redirects are followed manually so every hop is
+// re-checked. IPv4-mapped IPv6 addresses are matched against the IPv4 ranges.
 
-const _PRIVATE_IP_RE = /^(127\.|0\.|10\.|192\.168\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.)|\[?(::1|fc00:|fd)/i;
+const _BLOCKED_NETS = new net.BlockList();
+for (const [addr, prefix] of [
+  ['0.0.0.0', 8], ['10.0.0.0', 8], ['100.64.0.0', 10], ['127.0.0.0', 8],
+  ['169.254.0.0', 16], ['172.16.0.0', 12], ['192.0.0.0', 24], ['192.168.0.0', 16],
+  ['198.18.0.0', 15], ['224.0.0.0', 4], ['240.0.0.0', 4],
+]) _BLOCKED_NETS.addSubnet(addr, prefix, 'ipv4');
+for (const [addr, prefix] of [
+  ['::', 128], ['::1', 128], ['fc00::', 7], ['fe80::', 10], ['ff00::', 8],
+]) _BLOCKED_NETS.addSubnet(addr, prefix, 'ipv6');
 
-async function _fetchImageBuffer(url) {
+const _IMAGE_MAX_BYTES     = 30 * 1024 * 1024;
+const _IMAGE_MAX_REDIRECTS = 5;
+// Same headers Node's fetch() sent, minus Accept-Encoding — the body is read
+// raw, so ask for it uncompressed.
+const _IMAGE_HEADERS = { 'Accept': '*/*', 'Accept-Language': '*', 'Sec-Fetch-Mode': 'cors', 'User-Agent': 'node' };
+// Dedicated agents so every pooled socket was opened through _guardedLookup.
+const _IMAGE_AGENTS = {
+  'http:':  new http.Agent({ keepAlive: true }),
+  'https:': new https.Agent({ keepAlive: true }),
+};
+
+function _isBlockedAddress(address) {
+  return _BLOCKED_NETS.check(address, net.isIPv6(address) ? 'ipv6' : 'ipv4');
+}
+
+// Socket resolver. With autoSelectFamily Node asks for every address of the
+// host — refuse the connection if any of them is blocked.
+function _guardedLookup(hostname, options, callback) {
+  dns.lookup(hostname, options, (err, address, family) => {
+    if (err) return callback(err);
+    const all = Array.isArray(address) ? address : [{ address }];
+    if (all.some(a => _isBlockedAddress(a.address))) return callback(new Error('Private IP blocked'));
+    callback(null, address, family);
+  });
+}
+
+function _checkImageUrl(url) {
   let parsed;
   try { parsed = new URL(url); } catch { throw new Error('Invalid image URL'); }
   if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') throw new Error('Non-HTTP URL blocked');
-  if (_PRIVATE_IP_RE.test(parsed.hostname) || parsed.hostname === 'localhost') throw new Error('Private IP blocked');
+  // IP literals never go through the lookup, so check them here.
+  const host = parsed.hostname.replace(/^\[|\]$/g, '');
+  if (net.isIP(host) && _isBlockedAddress(host)) throw new Error('Private IP blocked');
+  return parsed;
+}
+
+function _requestImage(parsed, signal) {
+  return new Promise((resolve, reject) => {
+    const mod = parsed.protocol === 'https:' ? https : http;
+    mod.get(parsed, { agent: _IMAGE_AGENTS[parsed.protocol], headers: _IMAGE_HEADERS, lookup: _guardedLookup, signal }, resolve)
+      .on('error', reject);
+  });
+}
+
+async function _fetchImageBuffer(url) {
+  let parsed = _checkImageUrl(url);
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), config.get('imageFetchTimeout'));
   try {
-    const res = await fetch(url, { signal: controller.signal });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    return Buffer.from(await res.arrayBuffer());
+    for (let redirects = 0; ; redirects++) {
+      const res = await _requestImage(parsed, controller.signal);
+      const status = res.statusCode;
+
+      if (status >= 300 && status < 400 && res.headers.location) {
+        res.resume();
+        if (redirects >= _IMAGE_MAX_REDIRECTS) throw new Error('Too many redirects');
+        parsed = _checkImageUrl(new URL(res.headers.location, parsed).href);
+        continue;
+      }
+      if (status < 200 || status >= 300) { res.resume(); throw new Error(`HTTP ${status}`); }
+      if (Number(res.headers['content-length']) > _IMAGE_MAX_BYTES) { res.destroy(); throw new Error('Image too large'); }
+
+      const chunks = [];
+      let size = 0;
+      for await (const chunk of res) {
+        size += chunk.length;
+        if (size > _IMAGE_MAX_BYTES) { res.destroy(); throw new Error('Image too large'); }
+        chunks.push(chunk);
+      }
+      return Buffer.concat(chunks);
+    }
   } finally {
     clearTimeout(timer);
   }
