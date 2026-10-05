@@ -56,8 +56,8 @@ function start(safeSend) {
 
   server = http.createServer(async (req, res) => {
     // ── CORS — only allow the extension's own origin ───────────────
-    // Chrome enforces Origin headers on cross-origin fetches, so web pages
-    // cannot spoof a chrome-extension:// origin. Requests with no Origin
+    // Browsers set the Origin header themselves, so web pages cannot spoof a
+    // chrome-extension:// or moz-extension:// origin. Requests with no Origin
     // (e.g. same-origin, curl during dev) are allowed through.
     const origin = req.headers['origin'] || '';
     const originOk = !origin || origin.startsWith('chrome-extension://') || origin.startsWith('moz-extension://');

@@ -23,8 +23,8 @@
 
   const IMAGE_SEL = [
     'img[src]',
-    'img[srcset]'
-  ]
+    'img[srcset]',
+  ].join(', ');
 
   // These are updated from the server's /status config on every poll cycle.
   let MIN_LEN         = 50;
@@ -44,8 +44,6 @@
   const _SF_DEBUG = (typeof chrome !== 'undefined' && chrome.runtime?.id)
     ? (ctx, err) => console.debug(`[sf:${ctx}]`, err?.message ?? err)
     : () => {};
-
-  const STORAGE = chrome.storage.session || chrome.storage.local;
 
   let filterEnabled         = true;
   let imageDetectionEnabled = false;
@@ -405,11 +403,6 @@
 
       card.style.display = 'none';
       card.insertAdjacentElement('afterend', toInsert);
-
-      const countKey = type === 'image' ? 'imagesBlocked' : 'textBlocked';
-      STORAGE.get(countKey).then(s => {
-        STORAGE.set({ [countKey]: (s[countKey] || 0) + 1 });
-      }).catch(() => {});
     } catch (err) { _SF_DEBUG('apply-card-slop', err); }
   }
 
@@ -581,10 +574,6 @@
       });
 
       el.parentNode.insertBefore(toInsert, el);
-
-      STORAGE.get('textBlocked').then(s => {
-        STORAGE.set({ textBlocked: (s.textBlocked || 0) + 1 });
-      }).catch(() => {});
     } catch (err) { _SF_DEBUG('apply-text-slop', err); }
   }
 
@@ -807,10 +796,6 @@ function getPagePriorAdjustment() {
       _releaseContainerPos(container);
     });
     installGuards(shield);
-
-    STORAGE.get('imagesBlocked').then(s => {
-      STORAGE.set({ imagesBlocked: (s.imagesBlocked || 0) + 1 });
-    }).catch(() => {});
   }
 
   // ── Container preparation (shared by classifyImage and applyImageSlop) ──
@@ -1056,10 +1041,6 @@ function getPagePriorAdjustment() {
       });
       installGuards(placeholder);
       container.appendChild(placeholder);
-
-      STORAGE.get('imagesBlocked').then(s => {
-        STORAGE.set({ imagesBlocked: (s.imagesBlocked || 0) + 1 });
-      }).catch(() => {});
     } catch (err) {
       _SF_DEBUG('apply-image-slop', err);
       img.style.opacity       = '';
@@ -1079,9 +1060,6 @@ function getPagePriorAdjustment() {
     // Proxy's injected.js handles counting when active — avoid double-counting.
     if (document.documentElement.dataset.sfProxy === '1') return;
     chrome.runtime.sendMessage({ type: 'youtubeBlock' }).catch(() => {});
-    STORAGE.get('youtubeBlocked').then(s => {
-      STORAGE.set({ youtubeBlocked: (s.youtubeBlocked || 0) + 1 });
-    }).catch(() => {});
   }
 
   function getYtVideoCard(el) {

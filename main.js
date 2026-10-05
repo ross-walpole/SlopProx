@@ -5,7 +5,6 @@ const { app, BrowserWindow, Tray, Menu, ipcMain, shell, Notification } = require
 const { execFile, execFileSync } = require('child_process');
 const path = require('path');
 const fs   = require('fs');
-const os = require('os');
 
 const { autoUpdater }  = require('electron-updater');
 const logger           = require('./logger');
@@ -455,7 +454,7 @@ app.whenReady().then(async () => {
 
   createWindow();
 
-  const trayIconFilename = os.platform() == 'darwin' ? 'icon-darwin@2x.png' : 'icon.png';
+  const trayIconFilename = process.platform === 'darwin' ? 'icon-darwin@2x.png' : 'icon.png';
 
   tray = new Tray(path.join(__dirname, trayIconFilename));
   tray.setToolTip('SlopProx — AI Slop Filter');
