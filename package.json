@@ -1,7 +1,7 @@
 {
   "name": "slop-prox",
   "author": "Ross Walpole <ross.walpole@gmail.com>",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "license": "GPL-3.0-only",
   "description": "SlopProx AI Slop Filter — Reclaim the internet from AI-generated slop.",
   "homepage": "https://slopprox.com",
@@ -12,7 +12,14 @@
   "bugs": {
     "url": "https://github.com/ross-walpole/SlopProx/issues"
   },
-  "keywords": ["ai-detection", "slop", "chrome-extension", "electron", "privacy", "onnx"],
+  "keywords": [
+    "ai-detection",
+    "slop",
+    "chrome-extension",
+    "electron",
+    "privacy",
+    "onnx"
+  ],
   "main": "main.js",
   "scripts": {
     "start": "electron .",
@@ -26,7 +33,9 @@
       "target": "nsis",
       "icon": "icon.png",
       "requestedExecutionLevel": "asInvoker",
-      "signingHashAlgorithms": ["sha256"],
+      "signingHashAlgorithms": [
+        "sha256"
+      ],
       "timeStampServer": "http://timestamp.digicert.com"
     },
     "nsis": {
@@ -43,8 +52,14 @@
       "!models/**"
     ],
     "extraResources": [
-      { "from": "extension", "to": "extension" },
-      { "from": "models/ai-source-detector-onnx", "to": "models/ai-source-detector-onnx" }
+      {
+        "from": "extension",
+        "to": "extension"
+      },
+      {
+        "from": "models/ai-source-detector-onnx",
+        "to": "models/ai-source-detector-onnx"
+      }
     ],
     "asarUnpack": [
       "**/node_modules/sharp/**"
