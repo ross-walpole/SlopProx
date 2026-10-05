@@ -59,7 +59,7 @@ async function _updateAdBlockRuleset(enabled) {
 let _pendingAdCount = 0;
 let _pendingAdHosts = [];
 
-if (chrome.declarativeNetRequest.onRuleMatchedDebug) {
+if (chrome.declarativeNetRequest?.onRuleMatchedDebug) {
   chrome.declarativeNetRequest.onRuleMatchedDebug.addListener(info => {
     if (info.rule.rulesetId !== 'ad-block') return;
     _pendingAdCount++;

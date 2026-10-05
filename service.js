@@ -60,7 +60,7 @@ function start(safeSend) {
     // cannot spoof a chrome-extension:// origin. Requests with no Origin
     // (e.g. same-origin, curl during dev) are allowed through.
     const origin = req.headers['origin'] || '';
-    const originOk = !origin || origin.startsWith('chrome-extension://');
+    const originOk = !origin || origin.startsWith('chrome-extension://') || origin.startsWith('moz-extension://');
     if (!originOk) {
       res.writeHead(403); res.end(); return;
     }
