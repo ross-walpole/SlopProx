@@ -909,6 +909,11 @@ window.addEventListener('load', () => {
     return [d.getHours(), d.getMinutes(), d.getSeconds()].map(n => String(n).padStart(2, '0')).join(':');
   }
 
+  // Escape untrusted strings (hostnames, URLs, error text) before they go into innerHTML.
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+
   function addLogEntry({ ts, type, outcome, target, confidence }) {
     if (logEmpty && logEmpty.parentNode) logEmpty.remove();
 
@@ -918,7 +923,7 @@ window.addEventListener('load', () => {
     const barColor  = isBlocked ? meta.blockedBar   : '#2a4d2e';
     const confVal   = confidence != null ? confidence : (isBlocked ? 100 : 0);
     const confPct   = `${confVal}%`;
-    const targetStr = (target || '').slice(0, 30);
+    const targetStr = escapeHtml((target || '').slice(0, 30));
     const outcomeColor = isBlocked ? meta.blockedColor : 'color:#2a4d2e';
     const outcomeText  = isBlocked ? 'BLOCKED' : 'passed';
 
@@ -1095,7 +1100,7 @@ window.addEventListener('load', () => {
     const card = document.getElementById('proxyCard');
     if (card) card.classList.remove('fc-on');
     document.getElementById('proxySubtitle').innerHTML =
-      `<span class="text-red-400">⚠ Failed to start: ${message}</span>`;
+      `<span class="text-red-400">⚠ Failed to start: ${escapeHtml(message)}</span>`;
     document.getElementById('mainSubtitle').textContent = _mainSubtitleText(mainToggle.isOn());
     document.getElementById('adSubtitle').textContent = _adSubtitleText();
     uiSound('error');
@@ -1119,10 +1124,10 @@ window.addEventListener('load', () => {
         <span style="font-size:11px;font-weight:700;padding:2px 7px;border:1px solid #b84fa0;color:#b84fa0;letter-spacing:0.1em;flex-shrink:0">!ERR</span>
         <div>
           <div style="font-weight:700;font-size:12px;color:#9dd4b0;letter-spacing:0.05em">APP BLOCKED BY PROXY</div>
-          <div style="font-size:10px;color:#6db88a;margin-top:2px;letter-spacing:0.04em">${reason}</div>
+          <div style="font-size:10px;color:#6db88a;margin-top:2px;letter-spacing:0.04em">${escapeHtml(reason)}</div>
         </div>
       </div>
-      <div style="background:#111d13;border:1px solid #2a4d2e;border-radius:4px;padding:8px 12px;font-family:monospace;font-size:12px;color:#9dd4b0;margin-bottom:14px;word-break:break-all">${hostname}</div>
+      <div style="background:#111d13;border:1px solid #2a4d2e;border-radius:4px;padding:8px 12px;font-family:monospace;font-size:12px;color:#9dd4b0;margin-bottom:14px;word-break:break-all">${escapeHtml(hostname)}</div>
       <div style="font-size:10px;color:#6db88a;margin-bottom:14px;line-height:1.55;letter-spacing:0.03em">
         The proxy MITM certificate was rejected. Adding this host to the bypass list lets it connect directly, restoring normal behaviour.
       </div>
@@ -1158,8 +1163,8 @@ window.addEventListener('load', () => {
       ? '<div class="text-gd text-[10px] text-center py-5 tracking-wide">No bypass domains added yet.</div>'
       : userAdded.map(d =>
           `<div class="flex items-center justify-between bg-t3 border border-tb rounded px-3 py-2">
-            <span class="font-mono text-[10px] text-g">${d}</span>
-            <button data-host="${d}" class="bypass-inline-remove text-tb2 hover:text-red-400 transition-colors text-[12px] font-bold leading-none ml-2">×</button>
+            <span class="font-mono text-[10px] text-g">${escapeHtml(d)}</span>
+            <button data-host="${escapeHtml(d)}" class="bypass-inline-remove text-tb2 hover:text-red-400 transition-colors text-[12px] font-bold leading-none ml-2">×</button>
           </div>`
         ).join('');
 
@@ -1168,7 +1173,7 @@ window.addEventListener('load', () => {
       systemDoms.map(d =>
         `<div class="flex items-center justify-between bg-t border border-tb rounded px-3 py-2"
               title="Required for AI model downloads and app updates — cannot be removed">
-          <span class="font-mono text-[10px] text-gd">${d}</span>
+          <span class="font-mono text-[10px] text-gd">${escapeHtml(d)}</span>
           <span class="text-gd text-[10px] ml-2">[LOCK]</span>
         </div>`
       ).join('');
@@ -1201,8 +1206,8 @@ window.addEventListener('load', () => {
     }
     list.innerHTML = patterns.map(p =>
       `<div class="flex items-center justify-between bg-t3 border border-tb rounded px-3 py-2">
-        <span class="font-mono text-[10px] text-g truncate mr-2">${p}</span>
-        <button data-pattern="${p.replace(/"/g, '&quot;')}" class="trusted-inline-remove text-tb2 hover:text-red-400 transition-colors text-[12px] font-bold leading-none shrink-0">×</button>
+        <span class="font-mono text-[10px] text-g truncate mr-2">${escapeHtml(p)}</span>
+        <button data-pattern="${escapeHtml(p)}" class="trusted-inline-remove text-tb2 hover:text-red-400 transition-colors text-[12px] font-bold leading-none shrink-0">×</button>
       </div>`
     ).join('');
     list.querySelectorAll('.trusted-inline-remove').forEach(btn => {

@@ -141,7 +141,10 @@ function start(safeSend) {
         try {
           const parsed = JSON.parse(body.trim());
           delta = parsed.delta || 0;
-          hosts = Array.isArray(parsed.hosts) ? parsed.hosts : [];
+          // Hostnames only — these are rendered in the app's activity log.
+          hosts = Array.isArray(parsed.hosts)
+            ? parsed.hosts.filter(h => typeof h === 'string' && /^[a-z0-9._:[\]-]{1,253}$/i.test(h))
+            : [];
         } catch (_) {
           delta = parseInt(body.trim(), 10);
         }

@@ -322,6 +322,13 @@ autoUpdater.on('error', err => {
 });
 
 // ── Window ────────────────────────────────────────────────────────
+// App windows only ever show local files. Block navigation and new windows so
+// injected markup can't move a window (and its preload API) to a remote page.
+app.on('web-contents-created', (_, contents) => {
+  contents.on('will-navigate', e => e.preventDefault());
+  contents.setWindowOpenHandler(() => ({ action: 'deny' }));
+});
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 560, height: 720,
