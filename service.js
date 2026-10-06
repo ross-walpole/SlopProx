@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Ross Walpole <ross.walpole@gmail.com>
 // SPDX-License-Identifier: GPL-3.0-only
 
-// service.js — POST /classify, POST /classify-image, GET /status · port 8083, localhost only.
+// service.js — POST /classify, POST /classify-image, POST /extension-hello, GET /status · port 8083, localhost only.
 
 const http   = require('http');
 const crypto = require('crypto');
@@ -10,6 +10,7 @@ const { debugLog, logError } = require('./logger');
 const state  = require('./state');
 const counts = require('./counts');
 const config = require('./config');
+const extensions = require('./extensions');
 
 const PORT = 8083;
 let server = null;
@@ -76,6 +77,10 @@ function start(safeSend) {
       res.writeHead(204); res.end(); return;
     }
 
+    // Shows connected extensions in the EXTENSION tab, including older ones
+    // that never announce their version.
+    if (extensions.note(origin)) safeSend('extension-status', extensions.status());
+
     // ── GET /status ────────────────────────────────────────────────
     if (req.method === 'GET' && req.url === '/status') {
       const data = {
@@ -88,6 +93,8 @@ function start(safeSend) {
         imagesBlocked: state.imagesBlocked || 0,
         youtubeBlocked: state.youtubeBlocked || 0,
         trustedPatterns: state.TRUSTED_PATTERNS || [],
+        // Lets the extension popup warn when it is older than this app needs.
+        minExtensionVersion: extensions.MIN_EXTENSION_VERSION,
         // Extension-relevant config subset — applied by content.js on next poll.
         config: {
           textThreshold:        config.get('textThreshold'),
@@ -111,7 +118,8 @@ function start(safeSend) {
     // ── Token validation ───────────────────────────────────────────
     const incomingToken = req.headers['x-slopfilter-token'] || '';
     const tokenRequired = req.method === 'POST' && (
-      req.url === '/classify' || req.url === '/classify-image' || req.url === '/youtube-block' || req.url === '/ad-count-report'
+      req.url === '/classify' || req.url === '/classify-image' || req.url === '/youtube-block' || req.url === '/ad-count-report' ||
+      req.url === '/extension-hello'
     );
     if (tokenRequired && incomingToken !== SERVICE_TOKEN) {
       res.writeHead(401); res.end(); return;
@@ -125,6 +133,25 @@ function start(safeSend) {
       safeSend('classification-entry', { ts: Date.now(), type: 'youtube', outcome: 'blocked', target: 'youtube.com', confidence: null });
       debugLog(`YouTube AI-disclosed video blocked (#${state.youtubeBlocked})`);
       res.writeHead(204); res.end();
+      return;
+    }
+
+    // ── POST /extension-hello ──────────────────────────────────────
+    // The extension announces its version once per app session ({"version":"1.2.0"})
+    // so the app can flag one that is older than MIN_EXTENSION_VERSION.
+    if (req.method === 'POST' && req.url === '/extension-hello') {
+      let body = '';
+      req.on('data', chunk => { body += chunk; if (body.length > 1024) { res.writeHead(413); res.end(); req.destroy(); } });
+      req.on('end', () => {
+        if (res.destroyed) return;
+        let version = null;
+        try { version = JSON.parse(body.trim()).version; } catch (_) {}
+        if (typeof version === 'string' && /^\d{1,5}(\.\d{1,5}){0,3}$/.test(version)) {
+          debugLog(`Extension connected: ${version} (${extensions.browserFromOrigin(origin) || 'unknown origin'})`);
+          if (extensions.note(origin, version)) safeSend('extension-status', extensions.status());
+        }
+        res.writeHead(204); res.end();
+      });
       return;
     }
 

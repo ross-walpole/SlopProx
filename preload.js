@@ -28,6 +28,7 @@ const RECEIVE_CHANNELS = [
   'cert-ready',
   'extension-install-ready',
   'extension-installed',
+  'extension-status',
   'browser-detected',
   'image-model-progress',
   'settings-loaded',

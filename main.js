@@ -14,6 +14,7 @@ const config           = require('./config');
 const classifier       = require('./classifier');
 const proxy            = require('./proxy');
 const service          = require('./service');
+const extensions       = require('./extensions');
 
 process.on('uncaughtException',  err => logger.logError(err));
 process.on('unhandledRejection', err => logger.logError(err));
@@ -356,6 +357,7 @@ function createWindow() {
     safeSend('images-count',           state.imagesBlocked);
     safeSend('youtube-count',          state.youtubeBlocked);
     safeSend('extension-installed',    isExtensionInstalled());
+    safeSend('extension-status',       extensions.status());
     safeSend('settings-loaded',        _getSettings());
     safeSend('bypass-domains',         { list: state.BYPASS_DOMAINS, protected: state.BYPASS_DOMAINS_PROTECTED });
     safeSend('trusted-patterns',       state.TRUSTED_PATTERNS);

@@ -9,6 +9,7 @@
   const mainEl     = document.getElementById('main');
   const offlineEl  = document.getElementById('offline');
   const footerText = document.getElementById('footerText');
+  const footerEl   = document.getElementById('footer');
   const textCount  = document.getElementById('textCount');
   const adsCount   = document.getElementById('adsCount');
   const imgCount   = document.getElementById('imgCount');
@@ -36,6 +37,13 @@
     if (!data.enabled) {
       footerText.textContent = 'Text filtering paused';
     }
+
+    // The app updates itself; the extension waits for the browser store.
+    const ownVersion = chrome.runtime.getManifest().version;
+    if (data.minExtensionVersion && compareVersions(ownVersion, data.minExtensionVersion) < 0) {
+      footerText.textContent = `Update extension: v${ownVersion} → v${data.minExtensionVersion}+`;
+      footerEl.classList.add('warn');
+    }
   } catch (_) {
     dot.className          = 'status-dot off';
     statusLabel.textContent = 'OFFLINE';
@@ -43,3 +51,14 @@
     offlineEl.style.display = 'block';
   }
 })();
+
+// '1.10.0' vs '1.9.2' → 1. Missing or non-numeric parts count as 0.
+function compareVersions(a, b) {
+  const pa = String(a).split('.').map(n => parseInt(n, 10) || 0);
+  const pb = String(b).split('.').map(n => parseInt(n, 10) || 0);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const d = (pa[i] || 0) - (pb[i] || 0);
+    if (d) return Math.sign(d);
+  }
+  return 0;
+}

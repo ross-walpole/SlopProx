@@ -33,6 +33,22 @@ async function _ensureToken() {
   } catch (_) {}
 }
 
+// ── Version announcement ───────────────────────────────────────────
+// Tells the app which extension version is connected so it can flag one that
+// is out of date. Sent once per app session (the token changes on app restart).
+let _helloToken = '';
+
+function _announceVersion() {
+  if (!_serviceToken || _helloToken === _serviceToken) return;
+  _helloToken = _serviceToken;
+  fetch(BASE + '/extension-hello', {
+    method: 'POST',
+    body: JSON.stringify({ version: chrome.runtime.getManifest().version }),
+    headers: _tokenHeaders({ 'Content-Type': 'application/json' }),
+    signal: AbortSignal.timeout(1000),
+  }).catch(() => { _helloToken = ''; });
+}
+
 // ── DNR ad-block ruleset management ───────────────────────────────
 // Tracks whether the 'ad-block' static ruleset is currently enabled so we
 // don't call updateEnabledRulesets on every status poll (it's async + has
@@ -92,6 +108,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, respond) => {
       .then(r => r.json())
       .then(data => {
         if (data.token) _serviceToken = data.token;
+        _announceVersion();
         _updateAdBlockRuleset(data.adBlockEnabled ?? true);
         _reportAdBlockCount();
         respond({ ok: true, data });

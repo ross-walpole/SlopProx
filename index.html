@@ -529,6 +529,8 @@
           [DIR]
         </button>
       </div>
+      <!-- Connected extensions + version check (filled by extension-status) -->
+      <div id="extVersions" class="hidden mt-2.5 space-y-1 text-[10.5px] tracking-wide"></div>
     </div>
 
     <!-- Footer -->
@@ -1283,6 +1285,44 @@ window.addEventListener('load', () => {
     if (v) uiSound('success');
     setExtInstalled(v);
     _updateStgImageLock();
+  });
+
+  // ── Connected extension versions ──────────────────────────────────
+  // The app updates itself; the extension updates through the browser store,
+  // so show which version is connected and flag one the app has outgrown.
+  const EXT_UPDATE_URL = 'https://slopprox.com/changelog#updating';
+
+  api.on('extension-status', status => {
+    const box  = document.getElementById('extVersions');
+    const list = status?.extensions || [];
+    box.classList.toggle('hidden', list.length === 0);
+    box.replaceChildren(...list.map(e => {
+      const row = document.createElement('div');
+      row.className = 'flex items-center gap-2';
+
+      const dot = document.createElement('span');
+      dot.className = 'w-1.5 h-1.5 rounded-full shrink-0 '
+        + (e.outdated ? 'bg-m' : e.outdated === false ? 'bg-g' : 'border border-ca');
+      const name = document.createElement('span');
+      name.className   = 'text-gd w-14 shrink-0';
+      name.textContent = e.browser === 'firefox' ? 'FIREFOX' : 'CHROME';
+      const ver = document.createElement('span');
+      ver.className   = e.outdated ? 'text-mb' : e.version ? 'text-g' : 'text-gd';
+      ver.textContent = e.version ? `v${e.version}` : 'version unknown';
+      const note = document.createElement('span');
+      note.className   = 'flex-1 truncate ' + (e.outdated ? 'text-mb' : 'text-gd');
+      note.textContent = e.outdated ? `needs v${status.minVersion}+` : e.outdated === false ? 'up to date' : '';
+      row.append(dot, name, ver, note);
+
+      if (e.outdated !== false) {
+        const link = document.createElement('span');
+        link.className   = 'footer-link shrink-0';
+        link.textContent = e.outdated ? 'HOW TO UPDATE →' : 'CHECK VERSION →';
+        link.addEventListener('click', () => { uiSound('tap'); api.send('open-external', EXT_UPDATE_URL); });
+        row.append(link);
+      }
+      return row;
+    }));
   });
 
   // ── Utility buttons ───────────────────────────────────────────────
