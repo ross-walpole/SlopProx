@@ -318,12 +318,18 @@
   //   - e.preventDefault() stops any default action on the propagation
   //     path (link navigation, form submit, etc.).
   //
+  // confidence and method come from whatever answers on the local port, so
+  // they are escaped before being put into the page.
+  function _escHtml(s) {
+    return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+  }
+
   function _detectRowHtml(label, confidence, method) {
     return `<div class="sf-detect-row">
       <span class="sf-detect-icon"><span class="sf-icon-chev">&gt;</span><span class="sf-icon-cur">_</span></span>
-      <span class="sf-detect-label">${label}</span>
-      <span class="sf-detect-conf">${confidence}%</span>
-      ${method ? `<span class="sf-detect-method">${method}</span>` : ''}
+      <span class="sf-detect-label">${_escHtml(label)}</span>
+      <span class="sf-detect-conf">${_escHtml(confidence)}%</span>
+      ${method ? `<span class="sf-detect-method">${_escHtml(method)}</span>` : ''}
     </div>`;
   }
 
@@ -368,7 +374,7 @@
       placeholder.innerHTML = `
         <div class="sf-card-inner">
           ${_detectRowHtml(label, confidence, method)}
-          <button class="sf-reveal-btn" type="button">${revealLabel}</button>
+          <button class="sf-reveal-btn" type="button">${_escHtml(revealLabel)}</button>
         </div>`;
 
       // Wrap in a context-appropriate element to produce valid HTML.

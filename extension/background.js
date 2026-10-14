@@ -52,14 +52,18 @@ async function _updateAdBlockRuleset(enabled) {
 }
 
 // ── DNR ad-block counter ───────────────────────────────────────────
-// onRuleMatchedDebug fires once per blocked request (requires declarative-
-// NetRequestFeedback permission + unpacked extension — always true for
-// SlopProx since it is sideloaded). Counts accumulate here and are flushed
-// to the local service on every status poll (every ~2 s).
+// Both paths below use the declarativeNetRequestFeedback permission.
+// Unpacked (sideloaded) installs get onRuleMatchedDebug, which fires once per
+// blocked request with its URL. Store installs don't get that event, so they
+// poll getMatchedRules instead (no request URL, so no hostnames). Counts
+// accumulate here and are flushed to the local service on every status poll
+// (every ~2 s).
 let _pendingAdCount = 0;
 let _pendingAdHosts = [];
 
-if (chrome.declarativeNetRequest?.onRuleMatchedDebug) {
+const _hasRuleMatchedDebug = !!chrome.declarativeNetRequest?.onRuleMatchedDebug;
+
+if (_hasRuleMatchedDebug) {
   chrome.declarativeNetRequest.onRuleMatchedDebug.addListener(info => {
     if (info.rule.rulesetId !== 'ad-block') return;
     _pendingAdCount++;
@@ -69,7 +73,32 @@ if (chrome.declarativeNetRequest?.onRuleMatchedDebug) {
   });
 }
 
+// getMatchedRules is limited to 20 calls per 10 minutes and forgets matches
+// after 5 minutes, so poll at most once a minute. The cursor starts at worker
+// start so a restarted worker never recounts matches its predecessor saw.
+const _MATCHED_RULES_POLL_MS = 60000;
+let _matchedRulesSince = Date.now();
+let _nextMatchedRulesPoll = _matchedRulesSince + _MATCHED_RULES_POLL_MS;
+
+async function _pollMatchedRules() {
+  if (_hasRuleMatchedDebug || !chrome.declarativeNetRequest?.getMatchedRules) return;
+  const now = Date.now();
+  if (now < _nextMatchedRulesPoll) return;
+  _nextMatchedRulesPoll = now + _MATCHED_RULES_POLL_MS;
+  try {
+    const { rulesMatchedInfo } = await chrome.declarativeNetRequest.getMatchedRules({ minTimeStamp: _matchedRulesSince });
+    let latest = _matchedRulesSince;
+    for (const info of rulesMatchedInfo) {
+      if (info.timeStamp <= _matchedRulesSince) continue;
+      if (info.timeStamp > latest) latest = info.timeStamp;
+      if (info.rule.rulesetId === 'ad-block') _pendingAdCount++;
+    }
+    _matchedRulesSince = latest;
+  } catch (_) {}
+}
+
 async function _reportAdBlockCount() {
+  await _pollMatchedRules();
   if (_pendingAdCount === 0) return;
   const delta = _pendingAdCount;
   const hosts = _pendingAdHosts;
